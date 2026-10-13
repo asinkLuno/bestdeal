@@ -27,7 +27,9 @@ dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 - 官方 ModLoader 在 Demo 被禁用（Player.log: `[ModLoader] Limited build: mod loading disabled.`）
 
 ## 版本
-- v1.0.0 **清理调试代码**（移除现金差/工厂/特性 dump 等探针）；保留静默对账守卫——成交价与预测不符才报警；
+- v1.0.1 **发布收尾：移除全部诊断能力**——删除成交对账守卫（OnItemBought/OnItemSold 钩子）与所有诊断日志
+  （顾客/候选/组合/交易结束），HUD 去掉计价行；仅保留 HUD 功能与必要的失败告警
+- v1.0.0 **清理调试代码**（移除现金差/工厂/特性 dump 等探针）；
   `GetNegociatedValue()` 从计价链路剔除（只返回未加价原值）
 - v0.15.3 **整数定点计价**：售价 = 单价×(1000+加成×10)/1000 精确银行家舍入，修掉浮点误差
   （15×1.3 浮点算成 19.4999...96 被舍成 19，游戏实付 20）；多样化加成改读

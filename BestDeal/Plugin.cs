@@ -20,7 +20,7 @@ namespace BestDeal;
 /// 重复商品约束：读游戏自己的 StoreClient.isRequireVariety / IsItemInVarietyList，
 /// 要求不重复的顾客每类最多推荐 1 件（分组背包）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.0.0")]
+[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.0.1")]
 public class Plugin : BasePlugin
 {
     internal static new ManualLogSource Log;
@@ -33,7 +33,7 @@ public class Plugin : BasePlugin
         _harmony.PatchAll(typeof(Patches));
 
         ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.0 已加载：顾客上门自动提示最佳组合。F8 重算，F9 显隐");
+        Log.LogInfo("BestDeal v1.0.1 已加载（F8 重算，F9 显隐）");
     }
 
     internal static void EnsureHud()
@@ -100,7 +100,6 @@ public static class Patches
     {
         CurrentClient = __instance;
         Plugin.EnsureHud();
-        TryRun("抓取顾客信息", () => ClientInfo.Dump(__instance));
         TryRun("自动计算", Optimizer.Run);
     }
 
@@ -116,7 +115,6 @@ public static class Patches
             if ((long)((Il2CppObjectBase)cur).Pointer == (long)((Il2CppObjectBase)__instance).Pointer)
             {
                 CurrentClient = null;
-                Plugin.Log.LogInfo($"[顾客] {Ref.Get(__instance, "displayName", "?")} 交易结束");
             }
         }
         catch { }
@@ -138,31 +136,6 @@ public static class Patches
         {
             Plugin.Log.LogError($"PollHotkey: {e}");
         }
-    }
-
-    /// <summary>静默对账守卫：成交价与预测不符才出声（含两个方向：卖出=顾客购买，买入=顾客卖给玩家）。</summary>
-    [HarmonyPatch(typeof(StoreClient), "OnItemBought")]
-    [HarmonyPostfix]
-    static void OnItemBoughtPost(GameItem __0, int __1) => CheckDeal("卖出", __0, __1);
-
-    [HarmonyPatch(typeof(StoreClient), "OnItemSold")]
-    [HarmonyPostfix]
-    static void OnItemSoldPost(GameItem __0, int __1) => CheckDeal("买入", __0, __1);
-
-    static void CheckDeal(string tag, GameItem item, int paid)
-    {
-        try
-        {
-            if (CurrentClient == null) return;
-            long uv = Ref.ToLong(Ref.Get(item, "unitValue"), 0);
-            long cnt = Ref.ToLong(Ref.Get(item, "unitCount"), 1);
-            if (uv <= 0) return;
-            if (cnt <= 0) cnt = 1;
-            long expected = (Pricing.Accept ? Pricing.PricePerUnit(uv, Pricing.LastRequireVariety) : uv) * cnt;
-            if (paid != expected)
-                Plugin.Log.LogWarning($"[计价偏差] {tag} {Ref.Get(item, "name", "?")}：实付={paid} 预测={expected}（unit={uv}×{cnt}）");
-        }
-        catch { }
     }
 
     internal static void TryRun(string what, Action fn)
@@ -191,7 +164,6 @@ public static class Pricing
     public static double RetailPercent = double.NaN;  // 零售加价 %
     public static double VarietyPercent = double.NaN; // 多样化卖家加成 %
     public static bool Accept = true;                 // 当前顾客是否接受零售加价
-    public static bool LastRequireVariety;            // 上次计价顾客是否要求不重复（对账用）
 
     /// <summary>成交数据反推的多样化加成兜底值（游戏读取失败时使用，HUD 会标注「推导」）。</summary>
     public const double DerivedVarietyPercent = 15.0;
@@ -295,12 +267,6 @@ public static class Pricing
         return (q % 2 == 0) ? q : q + 1;
     }
 
-    /// <summary>总乘数（仅展示/日志用）。实际计价走整数运算 PricePerUnit（避免浮点误差）。</summary>
-    public static double Factor(bool requireVariety)
-    {
-        return 1.0 + TotalPercent10(requireVariety) / 1000.0;
-    }
-
     /// <summary>加价的存储形式未知（0.15 / 1.15 / 15），三种都换算成乘数。</summary>
     static double Interpret(double raw)
     {
@@ -309,33 +275,11 @@ public static class Pricing
         if (raw < 2.0) return raw;          // 1.15 → 1.15
         return 1.0 + raw / 100.0;           // 15 → 1.15
     }
-
-    public static string RawText => double.IsNaN(RawMarkup) ? "?" : RawMarkup.ToString("0.###");
-
-    public static string VarietyText
-    {
-        get
-        {
-            double p = EffectiveVarietyPercent();
-            string tag = (!double.IsNaN(VarietyPercent) && VarietyPercent != 0) ? "(游戏)" : "(推导)";
-            return p.ToString("0.###") + tag;
-        }
-    }
 }
 
-/// <summary>读取 StoreClient 的需求与预算。</summary>
+/// <summary>读取 StoreClient 的需求。</summary>
 public static class ClientInfo
 {
-    public static void Dump(StoreClient c)
-    {
-        Plugin.Log.LogInfo($"===== 顾客上门：{Ref.Get(c, "displayName", "?")} =====");
-        Plugin.Log.LogInfo($"  预算：{Safe(() => Convert.ToInt64(c.GetBudget()))}  类别：{TagsSummary(c)}  " +
-                           $"要求不重复：{Safe(() => Ref.Get(c, "isRequireVariety", "?"))}  " +
-                           $"接受加价：{Safe(() => Ref.Get(c, "acceptRetailMarkup", "?"))}");
-    }
-
-    static object Safe(Func<object> f) { try { return f(); } catch (Exception e) { return $"<{e.Message}>"; } }
-
     public static string TagsSummary(StoreClient c)
     {
         var parts = new List<string>();
@@ -412,7 +356,6 @@ public static class Optimizer
         public string GroupKey; // 同类型标识（identifier；空则用名字）
         public long Count;
         public long Price;
-        public string Detail;
     }
 
     public static void Run()
@@ -421,7 +364,6 @@ public static class Optimizer
         if (c == null)
         {
             Result.Set("BestDeal", new[] { "暂无顾客（等顾客上门后自动提示）" });
-            Plugin.Log.LogInfo("当前没有顾客");
             return;
         }
 
@@ -501,16 +443,11 @@ public static class Optimizer
             (requireVariety ? "  [要求不重复]" : ""),
             $"可售出总额：{total}（剩预算 {Math.Max(0, budget - total)}），候选 {cands.Count} 件" +
             (_skipped > 0 ? $"（另 {_skipped} 件价格异常已跳过）" : ""),
-            $"计价：×{Pricing.Factor(requireVariety):0.####}（零售 {Pricing.RawText}% + 多样 {(requireVariety ? Pricing.VarietyText : "0")}%，接受：{Pricing.Accept}）",
         };
         foreach (var p in picked)
             lines.Add($"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
         lines.Add($"共 {picked.Count} 件  [F8重算 F9显隐]");
 
-        Plugin.Log.LogInfo($"最佳组合（预算 {budget}，可售出 {total}，不重复={requireVariety}）");
-        foreach (var cd in cands)
-            Plugin.Log.LogInfo($"  候选 {cd.Name} ×{cd.Count} = {cd.Price}（{cd.Detail}）");
-        foreach (var l in lines) Plugin.Log.LogInfo("  " + l);
         Result.Set($"BestDeal — {name}", lines);
     }
 
@@ -527,7 +464,6 @@ public static class Optimizer
         _skipped = 0;
         Pricing.Refresh();
         Pricing.Accept = Ref.GetBool(c, "acceptRetailMarkup", true);
-        Pricing.LastRequireVariety = requireVariety;
 
         foreach (var (inv, zone) in ShopInventories.Enumerate())
         {
@@ -570,12 +506,9 @@ public static class Optimizer
                     GroupKey = gk,
                     Count = cnt,
                     Price = perUnit * cnt,
-                    Detail = $"unit={val}×{cnt} per={perUnit} @{invName} key={gk}",
                 });
             }
         }
-        Plugin.Log.LogInfo($"候选物品 {result.Count} 件（零售 {Pricing.RawText}% + 多样 {Pricing.VarietyText}%" +
-                           $"{(requireVariety ? "（要求不重复）" : "")} → ×{Pricing.Factor(requireVariety):0.####}）");
         return result;
     }
 }
