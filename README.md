@@ -1,0 +1,67 @@
+# skdp — Probably Stolen Demo mod 工程
+
+游戏：Probably Stolen Demo（Unity 2021.3.45f2 / IL2CPP / Steam AppID 4349200 / Linux+Proton）
+
+## 布局
+- `BestDeal/` — BepInEx 6 IL2CPP 插件：顾客上门读取需求（类别/预算），按 F8 计算预算内最佳售卖组合
+- `tools/dump_types.py` — .NET 元数据 dumper（venv: `.venv/bin/python -I tools/dump_types.py <dll> <pattern>`）
+
+## 构建
+```bash
+dotnet build BestDeal -c Release        # 构建并自动部署到游戏 BepInEx/plugins/
+dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
+```
+
+## 游戏侧路径
+- 游戏根：`/home/guozr/.local/share/Steam/steamapps/common/Probably Stolen Demo/`
+- 日志：`BepInEx/LogOutput.log`（游戏退出后会完整落盘；运行中看 compatdata 下的 Player.log）
+- 存档：`compatdata/4349200/pfx/.../LocalLow/Questing Goose Studio/Probably Stolen/`
+- winhttp 覆盖已写入该 prefix 的 `user.reg`（备份 `user.reg.bak-skdp`）
+
+## 逆向结论（关键 hook 点）
+- `StoreClient` — 顾客：`clientBuyingTagList/IdList`（类别）、`clientBlack*`、`clientBudget/clientCash`、
+  `buyPriceModifier`、`IsClientBuyingThisItem(GameItem)`、`HasBudgetLeftToBuy()`、`OnItemPlaced/OnItemSold/OnDealAccepted`
+- `GameItem` — `identifier/uniqueId/name/unitCount/unitValue`
+- `GameInventory.childItems` — 库存物品枚举；`EmporiumEntry.Instance` — 店内所有柜台/展示位
+- `StoreRequest` — 派系订单板（另一套系统）
+- 官方 ModLoader 在 Demo 被禁用（Player.log: `[ModLoader] Limited build: mod loading disabled.`）
+
+## 版本
+- v1.0.0 **清理调试代码**（移除现金差/工厂/特性 dump 等探针）；保留静默对账守卫——成交价与预测不符才报警；
+  `GetNegociatedValue()` 从计价链路剔除（只返回未加价原值）
+- v0.15.3 **整数定点计价**：售价 = 单价×(1000+加成×10)/1000 精确银行家舍入，修掉浮点误差
+  （15×1.3 浮点算成 19.4999...96 被舍成 19，游戏实付 20）；多样化加成改读
+  `VarietyBuyerBonus().GetCurrentValueMod()`=15（**实测**，`GetActualValueModifier` 对工厂对象返回 0）
+- v0.15.1 **修复闪退**：撤销对 `GameItem.AddFeatureRelatedToBuyer`/`AddClientItemBuyingFeature` 的 patch
+  （启动/物品初始化阶段被调用，postfix 里调 il2cpp 方法 → AccessViolation，见 BepInEx/ErrorLog.log）；
+  特性观察移到成交钩子（已验证的安全时机），且只在未学到多样化数值时 dump 一次
+- v0.15 现金差对账证实公式：普客 305→368（+63=17+17+29）、多样客 368→420（+52=20+32）。
+  多样加成的真实值不在 `VarietyBuyerBonus()` 工厂对象里（读出 0）→ 改为挂钩 `GameItem.AddFeatureRelatedToBuyer`
+  /`AddClientItemBuyingFeature`，物品被挂买方特性时读清单学习实际数值；取值链：特性实测→工厂→成交反推 15
+  （带标注）。对账钩子改为双方向：`OnItemBought`=玩家卖货（主用途）、`OnItemSold`=顾客卖货
+- v0.14 **售价 = 单价 × (1 + 零售加价% + 多样化卖家加成%)，Math.Round 银行家舍入**。多样化加成读
+  `ItemFeatureList.VarietyBuyerBonus()`（ItemFeature.valueModifier），仅对 `isRequireVariety` 顾客叠加。
+  数据验证：普客 15×1.15=17.25→17、25×1.15=28.75→29；要求不重复顾客 15×1.30=19.5→20、25×1.30=32.5→32
+  （加法叠加，且只有银行家舍入能同时解释 19.5→20 和 32.5→32）
+- v0.13 **售价 = 单价 × (1 + 零售加价)**：加价读游戏自己的 `PlayerStore.retailMarkup`，是否接受加价读
+  `StoreClient.acceptRetailMarkup`。取证钩子：`OnItemSold(GameItem, int)` 的 int=实付金额，每次成交自动打
+  `[成交] ... 实付=N 系数=... 预测=...` 可离线校验；`OnItemPlaced` 记录上柜时 neg 变化
+- v0.12 删掉 1.16 兜底（本来就是蒙的）——`GetNegociatedValue()` 取不到价就跳过该物品不参与计算
+- v0.11 价格改用游戏自己的 `GameItem.GetNegociatedValue()`（议价后单价，自动含声望/多样化加成——
+  `ItemFeatureList.VarietyBuyerBonus` 证实变价机制）
+- v0.10 砍掉「已在柜台」检测（多方案均不可靠，用户决定移除）；**重复商品约束**：读游戏自己的
+  `StoreClient.isRequireVariety`（每顾客开关）与 `IsItemInVarietyList(item)`（游戏自身重复判定），
+  要求不重复的顾客用分组背包每类限 1 件；已跟踪的同类直接跳过
+- v0.9 柜台判定改用游戏权威 API `EmporiumEntry.GetCountersItems()`（放弃观察式学习——游戏成交/拖拽也走
+  UncheckedAccept，学习目标会漂移）；扫描排除 sold/trash/drain/hidden/response/swap/afterhour 等非售卖区
+  （修「买走的东西还算」）；CompleteBusiness 清顾客改用指针比较（interop 代理引用永不相同）
+- v0.8 **只读模式**：彻底移除自动搬运（曾因学习目标漂移把 Expel+UncheckedAccept 打进临时库存导致物品丢失）；
+  保留柜台识别（Ctrl+点击一次，仅识别）+ HUD「✓已在柜台 / →需拿上柜台」标记
+- v0.7 顾客离场清 CurrentClient（防学习目标被顾客间的整理污染）；推荐区分柜台/库存
+- v0.6 自动上架 v2（学习式）——已废弃：目标漂移导致丢物品
+- v0.5 修背包回溯 bug（DP 对但只回溯出 1 件）；价格 = floor(unitValue×count×1.16)，系数可配置；
+  候选按 il2cpp 指针去重
+- v0.4 砍掉自动上架第一版；全店扫描无排除
+- v0.3 自动上架 v1 + 学习钩子（验证了 UncheckedAccept 可 hook、拖拽多跳）
+- v0.2 顾客上门自动计算 + 游戏内悬浮窗（F8 重算 / F9 显隐）
+- v0.1 日志输出

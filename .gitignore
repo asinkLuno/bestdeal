@@ -1,0 +1,11 @@
+# .NET 构建产物
+bin/
+obj/
+*.user
+
+# Python 虚拟环境
+.venv/
+
+# 编辑器
+.vs/
+.idea/
