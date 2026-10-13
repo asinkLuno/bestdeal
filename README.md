@@ -3,7 +3,8 @@
 游戏：Probably Stolen Demo（Unity 2021.3.45f2 / IL2CPP / Steam AppID 4349200 / Linux+Proton）
 
 ## 布局
-- `BestDeal/` — BepInEx 6 IL2CPP 插件：顾客上门读取需求（类别/预算），按 F8 计算预算内最佳售卖组合
+- `BestDeal/` — BepInEx 6 IL2CPP 插件：顾客上门读取需求（类别/预算），算出预算内最佳售卖组合并显示在 HUD（F8 重算 / F9 显隐）。
+  **价格一律来自游戏自己**：把候选物品逐件快速摆上柜台（游戏这时才会按当前顾客算出最终成交价）读走价格再立刻收回，详见下面「逆向结论」
 - `tools/dump_types.py` — .NET 元数据 dumper（venv: `.venv/bin/python -I tools/dump_types.py <dll> <pattern>`）
 
 ## 构建
@@ -21,12 +22,34 @@ dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 ## 逆向结论（关键 hook 点）
 - `StoreClient` — 顾客：`clientBuyingTagList/IdList`（类别）、`clientBlack*`、`clientBudget/clientCash`、
   `buyPriceModifier`、`IsClientBuyingThisItem(GameItem)`、`HasBudgetLeftToBuy()`、`OnItemPlaced/OnItemSold/OnDealAccepted`
-- `GameItem` — `identifier/uniqueId/name/unitCount/unitValue`
-- `GameInventory.childItems` — 库存物品枚举；`EmporiumEntry.Instance` — 店内所有柜台/展示位
+- **需求是到店之后才填的**：`StartMainDialogue` 那一刻 `clientBuyingTagList` 为空、`isRequireVariety=False`，
+  几秒后才有值 → 必须轮询需求指纹并刷新 HUD，否则类别行一直显示「无限制」。
+- **价格只在物品被摆给当前顾客看时才算**（`GameItem.GetNegociatedValue()`：背包里=原值 55，
+  摆上柜台=最终价 64/37，等于游戏实付）；`GetRefreshedValue/GetBaseValue/OnAddedToWeightedArea` 等
+  "零搬运重算"都不可靠（实测 6 件只 1 件变化且值不对），所以只能真摆一下再收回。
+- **价格数值示例（实测）**：净水药片 37、试剂盒 21、空瓶装水 8/4/4、废金属 12、垃圾 3、螺丝 16、
+  熔炉 50、模组 18；游戏按"每个节点各自加成/折扣并各自舍入"算（瓶身 1 + 9 片药片×7 = 64）。
+- **顾客特性**：`clientItemFeatureBuying` 是**特性 id 字符串**列表（商人 `["discountedBuy"]`、
+  多样化顾客 `["varietyBuyerBonus"]`），对应 `ItemFeatureList.<Id>()` 工厂。
+- **要求不重复**：`isRequireVariety`（到店后才置位）+ `IsItemInVarietyList(item)` + `varietyTrackingList`；
+  摆上柜台会让顾客"见过"物品 → 探测一轮结束后要把因此新增的记录删掉。
+- **中文名是现成的**：`LocHelper.GetLocalizedMechanic("type_household_good")` → 日用品、
+  `GetLocalizedItem("item_scrap_metal_name")` → 废金属（本地化表也能用 UnityPy 从
+  `StreamingAssets/aa/**/localization-string-tables-chinese(simplified)(zh)_assets_all.bundle` 抽出来）。
+- `GameItem` — `identifier/uniqueId/name/unitCount/unitValue`；物品类型 `GetGameItemType()`（HOUSEHOLD_GOOD/WATER/…）
+- `GameInventory.childItems` — 库存物品枚举；`EmporiumEntry.Instance` — 店内所有柜台/展示位（后柜台 identifier=`backInv`）
+- 存档是明文 JSON（Easy Save 3，`compatdata/.../Probably Stolen/save_8.es3`），可离线查店内每件物品与标签；
+  游戏自带 `GameLog_*.txt` 有 `tracked price`、`Display Case` 等行
 - `StoreRequest` — 派系订单板（另一套系统）
 - 官方 ModLoader 在 Demo 被禁用（Player.log: `[ModLoader] Limited build: mod loading disabled.`）
 
 ## 版本
+- v1.4.0 **价格改为直读游戏**：新增 `PriceProbe`——顾客到店、需求填好后，把候选物品（按游戏估值从高到低，≤16 件）
+  逐件快速摆上柜台（每件停 0.25 秒）读走游戏算好的最终价、立刻收回（源库存取物品自己的 `parentInventory`，
+  每步校验指针；被顾客买走就不碰；收回失败即停手告警；顾客离场先收回）。HUD 只推荐"探到真价"的物品。
+  删除此前自算价格的全部代码（加价公式/银行家舍入/容器逐层估值/顾客加成特性/`retailMarkup` 读取）。
+  （历史：v1.1.0~v1.3.0 曾按"逐层加价 + 顾客特性加成"估算，虽然能对上简单物品，
+  但面对商人折价、派系声望、容器内容物时反复出错，故整体废弃。）
 - v1.0.1 **发布收尾：移除全部诊断能力**——删除成交对账守卫（OnItemBought/OnItemSold 钩子）与所有诊断日志
   （顾客/候选/组合/交易结束），HUD 去掉计价行；仅保留 HUD 功能与必要的失败告警
 - v1.0.0 **清理调试代码**（移除现金差/工厂/特性 dump 等探针）；

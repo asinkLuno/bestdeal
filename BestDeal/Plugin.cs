@@ -14,13 +14,13 @@ namespace BestDeal;
 
 /// <summary>
 /// BestDeal — 顾客上门时按类别+预算计算最佳售卖组合，HUD 显示推荐清单（F8 重算 F9 显隐）。
-/// 只读不写：绝不移动或修改游戏状态。
-/// 计价（实测取证）：售价 = 单价 × (1 + 零售加价% + 多样化卖家加成%)，整数定点 + 银行家舍入；
-/// 数值读 PlayerStore.retailMarkup 与 ItemFeatureList.VarietyBuyerBonus().GetCurrentValueMod()。
-/// 重复商品约束：读游戏自己的 StoreClient.isRequireVariety / IsItemInVarietyList，
-/// 要求不重复的顾客每类最多推荐 1 件（分组背包）。
+/// 价格一律用游戏自己算的：物品**摆上柜台招待这位顾客**时游戏才会算出最终成交价（实测：背包里读 55，
+/// 摆上柜台变 64/37），所以 mod 会把候选物品逐件快速摆上柜台读走价格再收回（见 PriceProbe），
+/// 而不是自己按加价公式估算。
+/// 需求同样读游戏自己的字段：clientBuyingTagList / clientBuyingIdList（到店几秒后才填，轮询刷新）、
+/// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件，分组背包）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.0.1")]
+[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.0")]
 public class Plugin : BasePlugin
 {
     internal static new ManualLogSource Log;
@@ -33,7 +33,7 @@ public class Plugin : BasePlugin
         _harmony.PatchAll(typeof(Patches));
 
         ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.0.1 已加载（F8 重算，F9 显隐）");
+        Log.LogInfo("BestDeal v1.4.0 已加载（F8 重算，F9 显隐）");
     }
 
     internal static void EnsureHud()
@@ -92,6 +92,8 @@ public static class Patches
 {
     internal static StoreClient CurrentClient;
     private static int _lastHotkeyFrame;
+    private static string _lastReqSig;     // 上次渲染时的需求指纹
+    private static float _nextReqCheck;
 
     // 顾客开始对话 = 顾客已到柜台，自动计算一次
     [HarmonyPatch(typeof(StoreClient), "StartMainDialogue")]
@@ -99,8 +101,14 @@ public static class Patches
     static void OnClientArrived(StoreClient __instance)
     {
         CurrentClient = __instance;
+        _lastReqSig = null;
+        _nextReqCheck = 0f;
+        _arrivedAt = Time.unscaledTime;
+        _probedPtr = 0;
+        PriceProbe.Stop(CurrentClient);
         Plugin.EnsureHud();
         TryRun("自动计算", Optimizer.Run);
+        _lastReqSig = SafeSig(__instance);
     }
 
     // 交易结束清掉当前顾客（注意：interop 代理对象引用永不相同，必须比指针）
@@ -114,7 +122,10 @@ public static class Patches
             if (cur == null) return;
             if ((long)((Il2CppObjectBase)cur).Pointer == (long)((Il2CppObjectBase)__instance).Pointer)
             {
+                PriceProbe.Stop(CurrentClient);
                 CurrentClient = null;
+                _lastReqSig = null;
+                _probedPtr = 0;
             }
         }
         catch { }
@@ -127,15 +138,79 @@ public static class Patches
     {
         int frame = Time.frameCount;
         if (frame == _lastHotkeyFrame) return;
+        _lastHotkeyFrame = frame;
         try
         {
-            if (Input.GetKeyDown(KeyCode.F8)) { _lastHotkeyFrame = frame; Optimizer.Run(); }
-            else if (Input.GetKeyDown(KeyCode.F9)) { _lastHotkeyFrame = frame; Result.Visible = !Result.Visible; }
+            if (Input.GetKeyDown(KeyCode.F8)) RunProbeThenOptimize();
+            else if (Input.GetKeyDown(KeyCode.F9)) Result.Visible = !Result.Visible;
+            PollRequirement();
+            if (PriceProbe.Running) PriceProbe.Step(CurrentClient);
+            MaybeStartProbe();
         }
         catch (Exception e)
         {
             Plugin.Log.LogError($"PollHotkey: {e}");
         }
+    }
+
+    /// <summary>
+    /// 顾客需求是「到店之后」才填的（实测：StartMainDialogue 那一刻 clientBuyingTagList 为空、
+    /// isRequireVariety=False，几秒后才有 HOUSEHOLD_GOOD 且 isRequireVariety=True），
+    /// 所以按 0.5 秒轮询需求指纹，一变就重算，别让 HUD 停在「无限制」。
+    /// </summary>
+    static void PollRequirement()
+    {
+        var c = CurrentClient;
+        if (c == null) { _lastReqSig = null; return; }
+        if (Time.unscaledTime < _nextReqCheck) return;
+        _nextReqCheck = Time.unscaledTime + 0.5f;
+
+        var sig = SafeSig(c);
+        if (sig == _lastReqSig) return;
+        _lastReqSig = sig;
+        Optimizer.Run();
+    }
+
+    /// <summary>需求填好了（或到柜台几秒后）就给候选物品排一轮"上柜台读价"，拿游戏算的真价。</summary>
+    static void MaybeStartProbe()
+    {
+        var c = CurrentClient;
+        if (c == null) { _probedPtr = 0; return; }
+        if (PriceProbe.Running) return;
+        if ((long)((Il2CppObjectBase)c).Pointer == _probedPtr) return;   // 这位顾客已经探过一轮
+        if (Time.unscaledTime < _nextProbeCheck) return;
+        _nextProbeCheck = Time.unscaledTime + 1f;
+
+        bool hasReq;
+        try { hasReq = Ref.Items(Ref.Get(c, "clientBuyingTagList")).Any() || Ref.Items(Ref.Get(c, "clientBuyingIdList")).Any(); }
+        catch { hasReq = false; }
+        if (!hasReq && Time.unscaledTime - _arrivedAt < 4f) return;   // 需求还是空的（可能还没填）就再等几秒
+
+        var cands = Optimizer.CollectCandidates(c, Ref.GetBool(c, "isRequireVariety"));
+        if (cands.Count == 0) return;
+        _probedPtr = (long)((Il2CppObjectBase)c).Pointer;
+        PriceProbe.Start(c, cands);
+    }
+
+    static void RunProbeThenOptimize()
+    {
+        var c = CurrentClient;
+        if (c != null)
+        {
+            var cands = Optimizer.CollectCandidates(c, Ref.GetBool(c, "isRequireVariety"));
+            if (cands.Count > 0) { PriceProbe.Start(c, cands); return; }   // 排好队就等它跑完自动重算
+        }
+        Optimizer.Run();
+    }
+
+    static long _probedPtr;   // 已经探过价的顾客（il2cpp 指针），离开时清零
+    static float _nextProbeCheck;
+    static float _arrivedAt;
+
+    static string SafeSig(StoreClient c)
+    {
+        try { return Optimizer.RequirementSignature(c); }
+        catch { return null; }
     }
 
     internal static void TryRun(string what, Action fn)
@@ -152,141 +227,201 @@ public static class Patches
 }
 
 /// <summary>
-/// 售价公式（实测取证，现金差对账验证）：
-///   售价 = 单价 × (1 + 零售加价% + 多样化卖家加成%)，整数定点 + 银行家舍入（half-to-even）。
-/// 验证点：普客 15→17、25→29；要求不重复顾客 15→20（19.5 进位到偶）、25→32（32.5 舍到偶）。
-/// 数值来源：零售加价 PlayerStore.retailMarkup；多样化加成
-/// ItemFeatureList.VarietyBuyerBonus().GetCurrentValueMod()（仅 isRequireVariety 顾客叠加）。
+/// 价格探测：游戏只在"物品被摆给当前顾客看"的时候才算最终价（实测：背包里读 55，摆上柜台后变 64/37）。
+/// 所以这里把候选物品逐件放上柜台 → 读走游戏算好的价 → 立刻收回原库存（一件一件、每步校验）。
+/// 只借价格，不改归属：源库存取物品自己的 parentInventory，收回后校验指针，收回失败立即停手并告警。
 /// </summary>
-public static class Pricing
+public static class PriceProbe
 {
-    public static double RawMarkup = double.NaN;      // retailMarkup 原始值
-    public static double RetailPercent = double.NaN;  // 零售加价 %
-    public static double VarietyPercent = double.NaN; // 多样化卖家加成 %
-    public static bool Accept = true;                 // 当前顾客是否接受零售加价
+    private static readonly Dictionary<long, long> Prices = new();   // il2cpp 指针 → 游戏算的最终价
+    private static readonly List<GameItem> Queue = new();
+    private static GameItem _cur;
+    private static GameInventory _src, _dst;
+    private static float _nextAt;
+    private static List<string> _varietyBefore;   // 探测前顾客的多样性记录（探测后把新增项删掉，别污染判定）
 
-    /// <summary>成交数据反推的多样化加成兜底值（游戏读取失败时使用，HUD 会标注「推导」）。</summary>
-    public const double DerivedVarietyPercent = 15.0;
+    public static bool Running => _cur != null || Queue.Count > 0;
 
-    public static object GetPlayerStore()
+    /// <summary>游戏给这件物品算出的最终价（没探测过返回 0）。</summary>
+    public static long PriceFor(GameItem gi)
     {
-        try
-        {
-            var t = typeof(PlayerStore);
-            var p = t.GetProperty("instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-            if (p != null) return p.GetValue(null);
-            var f = t.GetField("instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-            return f?.GetValue(null);
-        }
-        catch { return null; }
+        try { return Prices.TryGetValue((long)((Il2CppObjectBase)gi).Pointer, out var v) ? v : 0; }
+        catch { return 0; }
     }
 
-    public static void Refresh()
+    /// <summary>给当前顾客安排一轮探测（每件约 0.25 秒）。</summary>
+    public static void Start(StoreClient c, IEnumerable<GameItem> items)
     {
-        RawMarkup = double.NaN;
-        RetailPercent = double.NaN;
-        VarietyPercent = double.NaN;
+        Prices.Clear();
+        Queue.Clear();
+        _cur = null;
+        _varietyBefore = SnapshotVariety(c);
+        foreach (var gi in items.Take(16)) Queue.Add(gi);
+        _dst = FindCounter();
+        _nextAt = Time.unscaledTime;
+    }
 
+    public static void Stop(StoreClient c)
+    {
+        if (_cur != null) ReturnCurrent();          // 别把东西留在柜台上
+        Queue.Clear();
+        RestoreVariety(c);
+    }
+
+    /// <summary>由 StoreClientCounter.Update 的轮询驱动：一步一件。</summary>
+    public static void Step(StoreClient c)
+    {
+        if (Time.unscaledTime < _nextAt) return;
+        if (_dst == null) { _dst = FindCounter(); if (_dst == null) { Queue.Clear(); return; } }
+
+        if (_cur == null)
+        {
+            if (Queue.Count == 0) return;
+            var gi = Queue[0];
+            Queue.RemoveAt(0);
+            try { _src = Ref.Get(gi, "parentInventory") as GameInventory; } catch { _src = null; }
+            if (_src == null) return;
+            _cur = gi;
+            try { _src.Expel(gi); } catch (Exception e) { Plugin.Log.LogWarning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
+            try { _dst.UncheckedAccept(gi); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"价格探测：上柜台失败，已放回：{e.Message}");
+                try { _src.UncheckedAccept(gi); } catch { }
+                _cur = null;
+                return;
+            }
+            _nextAt = Time.unscaledTime + 0.25f;    // 留一点时间给游戏算价
+            return;
+        }
+
+        long price = 0;
+        try { price = Ref.ToLong(Ref.Call0(_cur, "GetNegociatedValue"), 0); } catch { }
+        if (price > 0) { try { Prices[(long)((Il2CppObjectBase)_cur).Pointer] = price; } catch { } }
+        if (_cur != null) ReturnCurrent();
+        _nextAt = Time.unscaledTime + 0.1f;
+        if (Queue.Count == 0)
+        {
+            RestoreVariety(c);                                  // 一轮结束：清掉探测造成的"多样性记录"
+            Patches.TryRun("探测后重算", Optimizer.Run);          // 用游戏真价重算 HUD
+        }
+    }
+
+    /// <summary>把当前这件从柜台收回原库存，并校验真的回去了。</summary>
+    static void ReturnCurrent()
+    {
+        var item = _cur;
+        _cur = null;
+        if (item == null) return;
         try
         {
-            var store = GetPlayerStore();
-            if (store == null) Plugin.Log.LogWarning("拿不到 PlayerStore.instance，无法读取零售加价");
-            else
-            {
-                var v = Ref.Get(store, "retailMarkup");
-                if (v != null)
-                {
-                    RawMarkup = Convert.ToDouble(v.ToString());
-                    RetailPercent = (Interpret(RawMarkup) - 1.0) * 100.0;
-                }
-            }
+            var where = Ref.Get(item, "parentInventory") as GameInventory;
+            long wherePtr = Ptr(where), dstPtr = Ptr(_dst), srcPtr = Ptr(_src);
+            if (wherePtr == srcPtr) return;                       // 本来就在原位
+            if (_dst == null || wherePtr != dstPtr) return;        // 被顾客买走/挪走了：别去抢
+            where.Expel(item);
+            if (_src != null) _src.UncheckedAccept(item);
+            var back = Ref.Get(item, "parentInventory") as GameInventory;
+            if (Ptr(back) != srcPtr)
+                Plugin.Log.LogWarning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"读取 retailMarkup 失败：{e.Message}");
+            Plugin.Log.LogWarning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
         }
+    }
 
+    static long Ptr(object o) { try { return o == null ? 0 : (long)((Il2CppObjectBase)o).Pointer; } catch { return 0; } }
+
+    static string NameOf(GameItem gi) { try { return Ref.Get(gi, "name", "?")?.ToString(); } catch { return "?"; } }
+
+    /// <summary>柜台（后柜台）库存：顾客能看到的那一个。</summary>
+    static GameInventory FindCounter()
+    {
         try
         {
-            var feat = ItemFeatureList.VarietyBuyerBonus();
-            if (feat != null)
+            foreach (var (inv, _) in ShopInventories.Enumerate())
             {
-                // 实测：GetCurrentValueMod()=15 是真实加成（GetActualValueModifier 对未挂载的工厂对象返回 0）
-                int cur = -9999;
-                try { cur = feat.GetCurrentValueMod(); } catch { }
-                if (cur == -9999 || cur == 0)
-                {
-                    try { cur = feat.GetActualValueModifier(); } catch { }
-                }
-                if (cur == -9999 || cur == 0)
-                    cur = (int)Ref.ToLong(Ref.Get(feat, "valueModifier"), 0);
-                VarietyPercent = cur;
+                var id = Ref.Get(inv, "identifier", "")?.ToString() ?? "";
+                if (id.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0) return inv;
             }
         }
-        catch (Exception e)
+        catch { }
+        return null;
+    }
+
+    /// <summary>探测前的多样性记录（按字符串值比对：interop 代理对象每次都是新的，比引用不可靠）。</summary>
+    static List<string> SnapshotVariety(StoreClient c)
+    {
+        var list = new List<string>();
+        try { foreach (var x in Ref.Items(Ref.Get(c, "varietyTrackingList"))) list.Add(x?.ToString()); }
+        catch { }
+        return list;
+    }
+
+    /// <summary>探测会让顾客"见过"这些物品，把新增的多样性记录删掉，免得影响"要求不重复"的判定。</summary>
+    static void RestoreVariety(StoreClient c)
+    {
+        if (c == null || _varietyBefore == null) return;
+        try
         {
-            Plugin.Log.LogWarning($"读取 VarietyBuyerBonus 失败：{e.Message}");
+            var list = Ref.Get(c, "varietyTrackingList");
+            if (list != null)
+            {
+                var now = new List<string>();
+                foreach (var x in Ref.Items(list)) now.Add(x?.ToString());
+                foreach (var x in now)
+                {
+                    if (_varietyBefore.Contains(x)) continue;      // 探测前就有的，保留
+                    var mi = list.GetType().GetMethod("Remove", new[] { typeof(string) });
+                    mi?.Invoke(list, new object[] { x });
+                }
+            }
         }
-    }
-
-    /// <summary>多样化加成取值：游戏读取 → 成交反推兜底（HUD 标注来源）。</summary>
-    public static double EffectiveVarietyPercent()
-    {
-        if (!double.IsNaN(VarietyPercent) && VarietyPercent != 0) return VarietyPercent;
-        return DerivedVarietyPercent;
-    }
-
-    /// <summary>总加成（百分比×10 的整数，如 15%+15% → 300）。</summary>
-    static long TotalPercent10(bool requireVariety)
-    {
-        long p10 = 0;
-        if (!double.IsNaN(RetailPercent)) p10 += (long)Math.Round(RetailPercent * 10);
-        if (requireVariety) p10 += (long)Math.Round(EffectiveVarietyPercent() * 10);
-        return p10;
-    }
-
-    /// <summary>
-    /// 单件售价 = 单价 × (1000 + 加成×10) / 1000，精确整数运算 + 银行家舍入（half-to-even）。
-    /// 游戏即为此算法：15×(1+30%)=19.5→20、25×1.3=32.5→32、15×1.15=17.25→17、25×1.15=28.75→29 全吻合。
-    /// （勿改回 double 乘法：浮点会把 19.5 变成 19.4999...96 从而舍成 19。）
-    /// </summary>
-    public static long PricePerUnit(long unit, bool requireVariety)
-    {
-        long num = unit * (1000 + TotalPercent10(requireVariety));
-        return BankersDiv(num, 1000);
-    }
-
-    /// <summary>精确的银行家舍入除法（.5 时向偶数取整）。</summary>
-    static long BankersDiv(long num, long den)
-    {
-        long q = num / den;
-        long r = num % den;
-        long twice = r * 2;
-        if (twice > den) return q + 1;
-        if (twice < den) return q;
-        return (q % 2 == 0) ? q : q + 1;
-    }
-
-    /// <summary>加价的存储形式未知（0.15 / 1.15 / 15），三种都换算成乘数。</summary>
-    static double Interpret(double raw)
-    {
-        if (raw <= 0) return 1.0;
-        if (raw < 1.0) return 1.0 + raw;    // 0.15 → 1.15
-        if (raw < 2.0) return raw;          // 1.15 → 1.15
-        return 1.0 + raw / 100.0;           // 15 → 1.15
+        catch { }
+        _varietyBefore = null;
     }
 }
 
-/// <summary>读取 StoreClient 的需求。</summary>
+/// <summary>读取 StoreClient 的需求（类别名用游戏自己的本地化表翻成中文）。</summary>
 public static class ClientInfo
 {
     public static string TagsSummary(StoreClient c)
     {
         var parts = new List<string>();
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add(x?.ToString());
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add(x?.ToString());
-        var s = string.Join(",", parts);
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add(LocalizeTag(x?.ToString()));
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add(LocalizeId(x?.ToString()));
+        var s = string.Join("、", parts);
         return s.Length == 0 ? "无限制" : s;
+    }
+
+    /// <summary>物品 key → 中文类型名：type_household_good → 日用品（Mechanic 表）。查不到就用原值。</summary>
+    static string LocalizeTag(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return key ?? "";
+        var loc = "type_" + key.ToLowerInvariant();
+        try
+        {
+            var s = LocHelper.GetLocalizedMechanic(loc);
+            // 本地化失败时游戏返回 key 本身或空串
+            if (!string.IsNullOrEmpty(s) && s != loc) return s;
+        }
+        catch { }
+        return key;
+    }
+
+    /// <summary>物品 id → 中文名：item_scrap_metal_name → 废金属（Item 表）。查不到就用原值。</summary>
+    static string LocalizeId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return id ?? "";
+        var loc = "item_" + id + "_name";
+        try
+        {
+            var s = LocHelper.GetLocalizedItem(loc);
+            if (!string.IsNullOrEmpty(s) && s != loc) return s;
+        }
+        catch { }
+        return id;
     }
 }
 
@@ -304,6 +439,18 @@ public static class Ref
         }
         catch { }
         return def;
+    }
+
+    /// <summary>调无参方法（拿不到返回 null）。</summary>
+    public static object Call0(object o, string name)
+    {
+        try
+        {
+            var m = o?.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance,
+                                           null, Type.EmptyTypes, null);
+            return m?.Invoke(o, null);
+        }
+        catch { return null; }
     }
 
     public static bool GetBool(object o, string prop, bool def = false)
@@ -347,7 +494,7 @@ public static class Ref
 /// <summary>候选商品 + 分组背包优化（只读）。</summary>
 public static class Optimizer
 {
-    private static int _skipped; // 价格异常被跳过的候选数
+    private static int _unpriced; // 没探到游戏真价、未参与推荐的候选数
 
     class Cand
     {
@@ -355,7 +502,7 @@ public static class Optimizer
         public string Name;
         public string GroupKey; // 同类型标识（identifier；空则用名字）
         public long Count;
-        public long Price;
+        public long Price;   // 游戏自己算出来的最终成交价（摆上柜台探测得到）
     }
 
     public static void Run()
@@ -389,9 +536,12 @@ public static class Optimizer
             ? cands.GroupBy(x => x.GroupKey).Select(g => g.ToList()).ToList()
             : cands.Select(x => new List<Cand> { x }).ToList();
 
-        // 0/1 分组背包：容量=预算，每组最多取 1 件，最大化售出总额
+        // 0/1 分组背包：容量=预算，每组最多取 1 件，最大化售出总额。
+        // 重量必须用 cap+1 表示「放不下」——若截断到 cap，超预算的物品会被当成"刚好花光预算"，
+        // 结果反而比预算内的物品更"划算"而被选中（顾客根本买不起）。
         long scale = Math.Max(1, budget / 2_000_000 + 1);
         int cap = (int)(budget / scale);
+        int Weight(long price) => (int)Math.Min(cap + 1L, price / scale);
         var dp = new long[cap + 1];
         var choice = new int[groups.Count][];
 
@@ -399,7 +549,7 @@ public static class Optimizer
         {
             var items = groups[g];
             var w = new int[items.Count];
-            for (int k = 0; k < items.Count; k++) w[k] = (int)Math.Min(cap, items[k].Price / scale);
+            for (int k = 0; k < items.Count; k++) w[k] = Weight(items[k].Price);
 
             var prev = (long[])dp.Clone(); // 上一组的最优值（本组只能取 1 件）
             var row = new int[cap + 1];
@@ -430,8 +580,24 @@ public static class Optimizer
             {
                 var it = groups[g][k];
                 picked.Add(it);
-                pos -= (int)Math.Min(cap, it.Price / scale);
+                pos -= Weight(it.Price);
             }
+        }
+
+        string head = $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}" +
+                      (requireVariety ? "  [要求不重复]" : "");
+        string skippedNote = _unpriced > 0 ? $"（另 {_unpriced} 件未探到价已跳过）" : "";
+
+        // 候选都在预算之外：顾客一件也买不起（别推荐超预算的东西）
+        if (picked.Count == 0)
+        {
+            Result.Set($"BestDeal — {name}", new[]
+            {
+                head,
+                $"候选 {cands.Count} 件，但最便宜的也要 {cands.Min(x => x.Price)}，超出预算，他一件也买不起",
+                "[F8重算 F9显隐]",
+            });
+            return;
         }
 
         long total = 0;
@@ -439,10 +605,10 @@ public static class Optimizer
 
         var lines = new List<string>
         {
-            $"顾客：{name}  预算：{budget}  类别：{ClientInfo.TagsSummary(c)}" +
-            (requireVariety ? "  [要求不重复]" : ""),
-            $"可售出总额：{total}（剩预算 {Math.Max(0, budget - total)}），候选 {cands.Count} 件" +
-            (_skipped > 0 ? $"（另 {_skipped} 件价格异常已跳过）" : ""),
+            head,
+            $"可售出总额：{total}" +
+            (Ref.ToLong(SafeGetBudget(c), 0) > 0 ? $"（剩预算 {Math.Max(0, budget - total)}）" : "") +
+            $"，候选 {cands.Count} 件" + skippedNote,
         };
         foreach (var p in picked)
             lines.Add($"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
@@ -456,14 +622,52 @@ public static class Optimizer
         try { return c.GetBudget(); } catch { return Ref.Get(c, "clientBudget"); }
     }
 
+    /// <summary>
+    /// 需求指纹：顾客的类别/黑名单/预算/约束任意一项变了就说明游戏刚填完需求（见 Patches.PollRequirement）。
+    /// </summary>
+    internal static string RequirementSignature(StoreClient c)
+    {
+        var parts = new List<string>
+        {
+            Ref.Get(c, "identifier", "")?.ToString() ?? "",
+            Ref.ToLong(SafeGetBudget(c), 0).ToString(),
+            Ref.GetBool(c, "isRequireVariety") ? "V" : "-",
+            Ref.GetBool(c, "acceptRetailMarkup") ? "R" : "-",
+            Ref.GetBool(c, "isOfferWholesale") ? "W" : "-",
+        };
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add("t" + x);
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add("i" + x);
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBlackTagList"))) parts.Add("bt" + x);
+        foreach (var x in Ref.Items(Ref.Get(c, "clientBlackIdList"))) parts.Add("bi" + x);
+        // 顾客的买方加成特性（可能是到店后才挂上的，加了它 HUD 才会跟着刷新价格）
+        foreach (var x in Ref.Items(Ref.Get(c, "clientItemFeatureBuying")))
+            parts.Add("f" + x);   // 顾客的买方特性（折价/多样化等）会影响价格，变了就重算
+        return string.Join("|", parts);
+    }
+
+    /// <summary>候选物品（给价格探测用：与 Collect 同一套筛选）。</summary>
+    internal static List<GameItem> CollectCandidates(StoreClient c, bool requireVariety)
+    {
+        // 探测按"游戏估值从高到低"排队：超过上限时先探值钱的，尾部的低价值物品不参与推荐
+        return Collect(c, requireVariety)
+            .OrderByDescending(x => ValueOf(x.Item))
+            .Select(x => x.Item)
+            .ToList();
+    }
+
+    static long ValueOf(GameItem gi)
+    {
+        long v = Ref.ToLong(Ref.Call0(gi, "GetNegociatedValue"), 0);
+        if (v <= 0) v = Ref.ToLong(Ref.Get(gi, "unitValue"), 0);
+        return v;
+    }
+
     /// <summary>扫描各售卖/仓储区收集物品；排除已售/垃圾桶/中转等非售卖区。</summary>
     static List<Cand> Collect(StoreClient c, bool requireVariety)
     {
         var result = new List<Cand>();
         var seenPtr = new HashSet<long>();
-        _skipped = 0;
-        Pricing.Refresh();
-        Pricing.Accept = Ref.GetBool(c, "acceptRetailMarkup", true);
+        _unpriced = 0;
 
         foreach (var (inv, zone) in ShopInventories.Enumerate())
         {
@@ -487,13 +691,13 @@ public static class Optimizer
                 if (requireVariety && tracked) continue;
 
                 long cnt = Ref.ToLong(Ref.Get(gi, "unitCount"), 1);
-                long val = Ref.ToLong(Ref.Get(gi, "unitValue"), 0);
                 if (cnt <= 0) cnt = 1;
 
-                long perUnit = Pricing.Accept ? Pricing.PricePerUnit(val, requireVariety) : val;
-                if (perUnit <= 0)
+                // 价格只认"摆上柜台探测"到的游戏真价；没探到（超出探测上限等）就不推荐它
+                long price = PriceProbe.PriceFor(gi);
+                if (price <= 0)
                 {
-                    _skipped++;
+                    _unpriced++;
                     continue;
                 }
 
@@ -505,7 +709,7 @@ public static class Optimizer
                     Name = $"{Ref.Get(gi, "name", "?")}[{invName}]",
                     GroupKey = gk,
                     Count = cnt,
-                    Price = perUnit * cnt,
+                    Price = price,
                 });
             }
         }
