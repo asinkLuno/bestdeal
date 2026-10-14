@@ -13,7 +13,7 @@ using UnityEngine;
 namespace BestDeal;
 
 /// <summary>
-/// BestDeal — 顾客上门时按类别+预算计算最佳售卖组合，HUD 显示推荐清单（F8 重算 F9 显隐）。
+/// BestDeal — 顾客上门时按类别+预算计算最佳售卖组合，HUD 显示推荐清单。
 /// 价格一律用游戏自己算的：物品**摆上柜台招待这位顾客**时游戏才会算出最终成交价（实测：背包里读 55，
 /// 摆上柜台变 64/37），所以 mod 会把候选物品逐件快速摆上柜台读走价格再收回（见 PriceProbe），
 /// 而不是自己按加价公式估算。
@@ -33,7 +33,7 @@ public class Plugin : BasePlugin
         _harmony.PatchAll(typeof(Patches));
 
         ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.4.2 已加载（F8 重算，F9 显隐）");
+        Log.LogInfo("BestDeal v1.4.2 已加载");
     }
 
     internal static void EnsureHud()
@@ -57,8 +57,6 @@ public static class Result
 {
     public static string Title = "BestDeal";
     public static readonly List<string> Lines = new();
-    public static bool Visible = true;
-
     public static void Set(string title, IEnumerable<string> lines)
     {
         Title = title;
@@ -86,11 +84,11 @@ public class Hud : MonoBehaviour
 
     private void OnGUI()
     {
-        if (!Result.Visible) return;
         var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
         int total = Result.Lines.Count + (status == null ? 0 : 1);
         if (total == 0) return;
-        var rect = new Rect(16, 16, 700, 64 + total * 22);
+        float width = Mathf.Min(560f, Screen.width - 32f);
+        var rect = new Rect(16, 16, width, 64 + total * 22);
         GUI.Box(rect, Result.Title);
         int i = 0;
         for (; i < Result.Lines.Count; i++)
@@ -103,7 +101,7 @@ public class Hud : MonoBehaviour
 public static class Patches
 {
     internal static StoreClient CurrentClient;
-    private static int _lastHotkeyFrame;
+    private static int _lastPollFrame;
     private static string _lastReqSig;     // 上次渲染时的需求指纹
     private static float _nextReqCheck;
 
@@ -149,14 +147,12 @@ public static class Patches
     internal static void Poll()
     {
         int frame = Time.frameCount;
-        if (frame == _lastHotkeyFrame) return;
-        _lastHotkeyFrame = frame;
+        if (frame == _lastPollFrame) return;
+        _lastPollFrame = frame;
         try
         {
-            if (Input.GetKeyDown(KeyCode.F9)) Result.Visible = !Result.Visible;
             if (PriceProbe.Running) PriceProbe.Step(CurrentClient);   // 手里的东西先放回原位（在哪个场景都要放）
             if (EmporiumEntry.Instance == null) return;               // 不在店内场景（主菜单/读盘）：不扫库存、不重算
-            if (Input.GetKeyDown(KeyCode.F8)) RunProbeThenOptimize();
             PollRequirement();
             MaybeStartProbe();
         }
@@ -203,17 +199,6 @@ public static class Patches
         if (cands.Count == 0) return;
         // 只有真的排上队才记"这位顾客探过"——找不到柜台时不记，留着重试
         if (PriceProbe.Start(c, cands)) _probedPtr = (long)((Il2CppObjectBase)c).Pointer;
-    }
-
-    static void RunProbeThenOptimize()
-    {
-        var c = CurrentClient;
-        if (c != null)
-        {
-            var cands = Optimizer.CollectCandidates(c, Ref.GetBool(c, "isRequireVariety"));
-            if (cands.Count > 0) { PriceProbe.Start(c, cands); return; }   // 排好队就等它跑完自动重算
-        }
-        Optimizer.Run();
     }
 
     static long _probedPtr;   // 已经探过价的顾客（il2cpp 指针），离开时清零
@@ -562,7 +547,6 @@ public static class Optimizer
             {
                 $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}",
                 note,
-                "[F8重算 F9显隐]",
             });
             return;
         }
@@ -634,7 +618,6 @@ public static class Optimizer
             {
                 head,
                 $"候选 {cands.Count} 件，但最便宜的也要 {cands.Min(x => x.Price)}，超出预算，他一件也买不起",
-                "[F8重算 F9显隐]",
             });
             return;
         }
@@ -651,7 +634,7 @@ public static class Optimizer
         };
         foreach (var p in picked)
             lines.Add($"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
-        lines.Add($"共 {picked.Count} 件  [F8重算 F9显隐]");
+        lines.Add($"共 {picked.Count} 件");
 
         Result.Set($"BestDeal — {name}", lines);
     }

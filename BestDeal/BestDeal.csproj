@@ -36,9 +36,6 @@
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.CoreModule.dll</HintPath>
     </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.InputLegacyModule.dll</HintPath>
-    </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
       <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.IMGUIModule.dll</HintPath>
     </Reference>
