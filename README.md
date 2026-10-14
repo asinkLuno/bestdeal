@@ -44,6 +44,11 @@ dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 - 官方 ModLoader 在 Demo 被禁用（Player.log: `[ModLoader] Limited build: mod loading disabled.`）
 
 ## 版本
+- v1.4.1 **修复探测一步都没跑**：v1.4.0 里 `CollectCandidates` 复用 `Collect`，而 `Collect` 只收"已探到价"的物品
+  → 探测队列永远为空、一件也没摆上柜台（先有鸡还是先有蛋）。现在 `Collect(c, requireVariety, needPrice:)`，
+  探测排队用 `needPrice:false`（不要求已探到价），HUD 推荐仍只认探到真价的物品。
+  另外：轮询改由 HUD 自己的 `Update` 驱动（不再只靠游戏的 `StoreClientCounter.Update`），
+  HUD 显示探测进度（`价格探测中 N/M`），找不到后柜台时告警并留待重试。
 - v1.4.0 **价格改为直读游戏**：新增 `PriceProbe`——顾客到店、需求填好后，把候选物品（按游戏估值从高到低，≤16 件）
   逐件快速摆上柜台（每件停 0.25 秒）读走游戏算好的最终价、立刻收回（源库存取物品自己的 `parentInventory`，
   每步校验指针；被顾客买走就不碰；收回失败即停手告警；顾客离场先收回）。HUD 只推荐"探到真价"的物品。

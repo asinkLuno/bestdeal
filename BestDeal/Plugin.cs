@@ -20,7 +20,7 @@ namespace BestDeal;
 /// 需求同样读游戏自己的字段：clientBuyingTagList / clientBuyingIdList（到店几秒后才填，轮询刷新）、
 /// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件，分组背包）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.0")]
+[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.1")]
 public class Plugin : BasePlugin
 {
     internal static new ManualLogSource Log;
@@ -33,7 +33,7 @@ public class Plugin : BasePlugin
         _harmony.PatchAll(typeof(Patches));
 
         ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.4.0 已加载（F8 重算，F9 显隐）");
+        Log.LogInfo("BestDeal v1.4.1 已加载（F8 重算，F9 显隐）");
     }
 
     internal static void EnsureHud()
@@ -78,13 +78,25 @@ public class Hud : MonoBehaviour
         Instance = this;
     }
 
+    // 自己的 Update 一定会被 Unity 调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
+    private void Update()
+    {
+        Patches.Poll();
+    }
+
     private void OnGUI()
     {
-        if (!Result.Visible || Result.Lines.Count == 0) return;
-        var rect = new Rect(16, 16, 700, 64 + Result.Lines.Count * 22);
+        if (!Result.Visible) return;
+        var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
+        int total = Result.Lines.Count + (status == null ? 0 : 1);
+        if (total == 0) return;
+        var rect = new Rect(16, 16, 700, 64 + total * 22);
         GUI.Box(rect, Result.Title);
-        for (int i = 0; i < Result.Lines.Count; i++)
+        int i = 0;
+        for (; i < Result.Lines.Count; i++)
             GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), Result.Lines[i]);
+        if (status != null)
+            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
     }
 }
 
@@ -131,10 +143,10 @@ public static class Patches
         catch { }
     }
 
-    // 热键轮询（挂游戏自己的 Update；带同帧去重防多实例）
+    // 每帧轮询：挂游戏自己的 Update + HUD 自己的 Update（两个都在时靠同帧去重只跑一次）
     [HarmonyPatch(typeof(StoreClientCounter), "Update")]
     [HarmonyPostfix]
-    static void PollHotkey()
+    internal static void Poll()
     {
         int frame = Time.frameCount;
         if (frame == _lastHotkeyFrame) return;
@@ -149,7 +161,7 @@ public static class Patches
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"PollHotkey: {e}");
+            Plugin.Log.LogError($"Poll: {e}");
         }
     }
 
@@ -188,8 +200,8 @@ public static class Patches
 
         var cands = Optimizer.CollectCandidates(c, Ref.GetBool(c, "isRequireVariety"));
         if (cands.Count == 0) return;
-        _probedPtr = (long)((Il2CppObjectBase)c).Pointer;
-        PriceProbe.Start(c, cands);
+        // 只有真的排上队才记"这位顾客探过"——找不到柜台时不记，留着重试
+        if (PriceProbe.Start(c, cands)) _probedPtr = (long)((Il2CppObjectBase)c).Pointer;
     }
 
     static void RunProbeThenOptimize()
@@ -238,9 +250,21 @@ public static class PriceProbe
     private static GameItem _cur;
     private static GameInventory _src, _dst;
     private static float _nextAt;
+    private static int _total;                    // 本轮要探的件数（算进度用）
     private static List<string> _varietyBefore;   // 探测前顾客的多样性记录（探测后把新增项删掉，别污染判定）
 
     public static bool Running => _cur != null || Queue.Count > 0;
+
+    /// <summary>探测进度（HUD 每帧直接画；为空表示没在探测）。</summary>
+    public static string Status
+    {
+        get
+        {
+            if (!Running) return null;
+            int done = Math.Max(0, _total - Queue.Count - (_cur != null ? 1 : 0));
+            return $"价格探测中 {done}/{_total}：物品会短暂摆上柜台，读完价自动收回";
+        }
+    }
 
     /// <summary>游戏给这件物品算出的最终价（没探测过返回 0）。</summary>
     public static long PriceFor(GameItem gi)
@@ -249,22 +273,31 @@ public static class PriceProbe
         catch { return 0; }
     }
 
-    /// <summary>给当前顾客安排一轮探测（每件约 0.25 秒）。</summary>
-    public static void Start(StoreClient c, IEnumerable<GameItem> items)
+    /// <summary>给当前顾客安排一轮探测（每件约 0.25 秒）。找不到柜台就返回 false（什么也不动）。</summary>
+    public static bool Start(StoreClient c, IEnumerable<GameItem> items)
     {
+        var dst = FindCounter();
+        if (dst == null)
+        {
+            Plugin.Log.LogWarning("价格探测：没找到后柜台（backInv），本轮跳过");
+            return false;
+        }
         Prices.Clear();
         Queue.Clear();
         _cur = null;
         _varietyBefore = SnapshotVariety(c);
         foreach (var gi in items.Take(16)) Queue.Add(gi);
-        _dst = FindCounter();
+        _total = Queue.Count;
+        _dst = dst;
         _nextAt = Time.unscaledTime;
+        return true;
     }
 
     public static void Stop(StoreClient c)
     {
         if (_cur != null) ReturnCurrent();          // 别把东西留在柜台上
         Queue.Clear();
+        _total = 0;
         RestoreVariety(c);
     }
 
@@ -272,7 +305,7 @@ public static class PriceProbe
     public static void Step(StoreClient c)
     {
         if (Time.unscaledTime < _nextAt) return;
-        if (_dst == null) { _dst = FindCounter(); if (_dst == null) { Queue.Clear(); return; } }
+        if (_dst == null) { _dst = FindCounter(); if (_dst == null) { Queue.Clear(); _total = 0; return; } }
 
         if (_cur == null)
         {
@@ -516,13 +549,18 @@ public static class Optimizer
 
         var name = Ref.Get(c, "displayName", "?")?.ToString();
         bool requireVariety = Ref.GetBool(c, "isRequireVariety");
-        var cands = Collect(c, requireVariety);
+        var cands = Collect(c, requireVariety, needPrice: true);
         if (cands.Count == 0)
         {
+            // 一样都没定价：可能只是还没探测（本来就会自动探），别急着说"他不买"
+            string note = PriceProbe.Running
+                ? "正在逐件摆上柜台探测价格…（探完自动更新）"
+                : (_unpriced > 0 ? $"候选 {_unpriced} 件，价格还没探到（自动重探中）"
+                                 : "他不会买你店里的任何东西");
             Result.Set($"BestDeal — {name}", new[]
             {
                 $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}",
-                "他不会买你店里的任何东西",
+                note,
                 "[F8重算 F9显隐]",
             });
             return;
@@ -645,11 +683,11 @@ public static class Optimizer
         return string.Join("|", parts);
     }
 
-    /// <summary>候选物品（给价格探测用：与 Collect 同一套筛选）。</summary>
+    /// <summary>候选物品（给价格探测排队用：与 Collect 同一套筛选，但**不要求已经探到价**）。</summary>
     internal static List<GameItem> CollectCandidates(StoreClient c, bool requireVariety)
     {
         // 探测按"游戏估值从高到低"排队：超过上限时先探值钱的，尾部的低价值物品不参与推荐
-        return Collect(c, requireVariety)
+        return Collect(c, requireVariety, needPrice: false)
             .OrderByDescending(x => ValueOf(x.Item))
             .Select(x => x.Item)
             .ToList();
@@ -662,8 +700,12 @@ public static class Optimizer
         return v;
     }
 
-    /// <summary>扫描各售卖/仓储区收集物品；排除已售/垃圾桶/中转等非售卖区。</summary>
-    static List<Cand> Collect(StoreClient c, bool requireVariety)
+    /// <summary>
+    /// 扫描各售卖/仓储区收集物品；排除已售/垃圾桶/中转等非售卖区。
+    /// needPrice=true（HUD 推荐）只保留已探到游戏价的物品；needPrice=false（给探测排队）不做价格过滤——
+    /// 否则就成了"要先探到价，才肯去探价"的死结（v1.4.0 的实际 bug：探测一步都没跑过）。
+    /// </summary>
+    static List<Cand> Collect(StoreClient c, bool requireVariety, bool needPrice)
     {
         var result = new List<Cand>();
         var seenPtr = new HashSet<long>();
@@ -695,7 +737,7 @@ public static class Optimizer
 
                 // 价格只认"摆上柜台探测"到的游戏真价；没探到（超出探测上限等）就不推荐它
                 long price = PriceProbe.PriceFor(gi);
-                if (price <= 0)
+                if (price <= 0 && needPrice)
                 {
                     _unpriced++;
                     continue;
