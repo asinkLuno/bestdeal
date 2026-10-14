@@ -20,7 +20,7 @@ namespace BestDeal;
 /// 需求同样读游戏自己的字段：clientBuyingTagList / clientBuyingIdList（到店几秒后才填，轮询刷新）、
 /// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件，分组背包）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.1")]
+[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.2")]
 public class Plugin : BasePlugin
 {
     internal static new ManualLogSource Log;
@@ -33,7 +33,7 @@ public class Plugin : BasePlugin
         _harmony.PatchAll(typeof(Patches));
 
         ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.4.1 已加载（F8 重算，F9 显隐）");
+        Log.LogInfo("BestDeal v1.4.2 已加载（F8 重算，F9 显隐）");
     }
 
     internal static void EnsureHud()
@@ -153,10 +153,11 @@ public static class Patches
         _lastHotkeyFrame = frame;
         try
         {
+            if (Input.GetKeyDown(KeyCode.F9)) Result.Visible = !Result.Visible;
+            if (PriceProbe.Running) PriceProbe.Step(CurrentClient);   // 手里的东西先放回原位（在哪个场景都要放）
+            if (EmporiumEntry.Instance == null) return;               // 不在店内场景（主菜单/读盘）：不扫库存、不重算
             if (Input.GetKeyDown(KeyCode.F8)) RunProbeThenOptimize();
-            else if (Input.GetKeyDown(KeyCode.F9)) Result.Visible = !Result.Visible;
             PollRequirement();
-            if (PriceProbe.Running) PriceProbe.Step(CurrentClient);
             MaybeStartProbe();
         }
         catch (Exception e)
@@ -777,7 +778,7 @@ public static class ShopInventories
         var entry = EmporiumEntry.Instance;
         if (entry == null)
         {
-            Plugin.Log.LogWarning("EmporiumEntry.Instance 为空（要在店内场景按 F8）");
+            Plugin.Log.LogWarning("EmporiumEntry.Instance 为空（不在店内场景？）");
             yield break;
         }
 
