@@ -10,7 +10,7 @@
     <GameDir Condition="'$(GameDir)' == ''">/home/guozr/.local/share/Steam/steamapps/common/Probably Stolen Demo</GameDir>
     <!-- MelonLoader 装在游戏根目录：框架 dll 在 MelonLoader/net6/，游戏代理程序集在 MelonLoader/Il2CppAssemblies/（首次启动游戏后生成） -->
     <MelonLoaderDir Condition="'$(MelonLoaderDir)' == ''">$(GameDir)/MelonLoader</MelonLoaderDir>
-    <DebugType>embedded</DebugType>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
