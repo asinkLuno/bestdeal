@@ -2,6 +2,9 @@
 
 游戏：Probably Stolen（Demo，Steam AppID 4349200 / Unity IL2CPP）。MelonLoader mod。
 
+> **装 mod 的看 [INSTALL.md](INSTALL.md)**（使用者视角：装 MelonLoader + 放 dll + 排错）。
+> 本文件其余部分是开发说明。
+
 ## 做什么
 
 顾客走到柜台开始对话后，自动算出**这位顾客会买哪些东西、怎么卖最划算**，把结果列在屏幕左上角：

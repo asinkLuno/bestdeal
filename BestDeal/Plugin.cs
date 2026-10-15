@@ -8,7 +8,7 @@ using Il2CppInterop.Runtime.InteropTypes;
 using MelonLoader;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(BestDeal.Plugin), "BestDeal", "1.5.0", "guozr")]
+[assembly: MelonInfo(typeof(BestDeal.Plugin), "BestDeal", BestDeal.Plugin.Version, "guozr")]
 [assembly: MelonID("guozr.skdp.bestdeal")]
 [assembly: MelonGame("Questing Goose Studio", "Probably Stolen")]
 // 关掉 MelonLoader 的自动打补丁：它等价于 Harmony.PatchAll(Assembly)，要求补丁类带**类级**
@@ -33,10 +33,13 @@ namespace BestDeal;
 /// </summary>
 public class Plugin : MelonMod
 {
+    public const string Version = "1.5.0";
+
     public override void OnInitializeMelon()
     {
+        Loc.Refresh();                                                     // 文案语言跟随游戏设置
         var patched = HarmonyInstance.TryPatchAll(typeof(Patches), true);   // true = 允许类上没有注解（BepInEx 版语义）
-        MelonLogger.Msg($"BestDeal v1.5.0 已加载（MelonLoader，已打补丁 {patched?.Count ?? 0} 处）");
+        MelonLogger.Msg(Loc.S("loaded", Version, patched?.Count ?? 0));
     }
 
     // 自己的 OnUpdate 每帧一定会被调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
@@ -88,8 +91,9 @@ public static class Patches
         _nextReqCheck = 0f;
         _arrivedAt = Time.unscaledTime;
         _probedPtr = 0;
+        Loc.Refresh();                      // 玩家可能刚在选项里换过语言
         PriceProbe.Stop(CurrentClient);
-        TryRun("自动计算", Optimizer.Run);
+        TryRun(Loc.S("whatAuto"), Optimizer.Run);
         _lastReqSig = SafeSig(__instance);
     }
 
@@ -191,7 +195,7 @@ public static class Patches
         }
         catch (Exception e)
         {
-            MelonLogger.Error($"[{what}] 失败：{e}");
+            MelonLogger.Error(Loc.S("errRunFailed", what, e));
         }
     }
 }
@@ -220,7 +224,7 @@ public static class PriceProbe
         {
             if (!Running) return null;
             int done = Math.Max(0, _total - Queue.Count - (_cur != null ? 1 : 0));
-            return $"价格探测中 {done}/{_total}：物品会短暂摆上柜台，读完价自动收回";
+            return Loc.S("probeStatus", done, _total);
         }
     }
 
@@ -237,7 +241,7 @@ public static class PriceProbe
         var dst = FindCounter();
         if (dst == null)
         {
-            MelonLogger.Warning("价格探测：没找到后柜台（backInv），本轮跳过");
+            MelonLogger.Warning(Loc.S("warnNoCounter"));
             return false;
         }
         Prices.Clear();
@@ -273,11 +277,11 @@ public static class PriceProbe
             try { _src = Ref.Get(gi, "parentInventory") as GameInventory; } catch { _src = null; }
             if (_src == null) return;
             _cur = gi;
-            try { _src.Expel(gi); } catch (Exception e) { MelonLogger.Warning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
+            try { _src.Expel(gi); } catch (Exception e) { MelonLogger.Warning(Loc.S("warnExpelFailed", NameOf(gi), e.Message)); _cur = null; return; }
             try { _dst.UncheckedAccept(gi); }
             catch (Exception e)
             {
-                MelonLogger.Warning($"价格探测：上柜台失败，已放回：{e.Message}");
+                MelonLogger.Warning(Loc.S("warnPlaceFailed", e.Message));
                 try { _src.UncheckedAccept(gi); } catch { }
                 _cur = null;
                 return;
@@ -294,7 +298,7 @@ public static class PriceProbe
         if (Queue.Count == 0)
         {
             RestoreVariety(c);                                  // 一轮结束：清掉探测造成的"多样性记录"
-            Patches.TryRun("探测后重算", Optimizer.Run);          // 用游戏真价重算 HUD
+            Patches.TryRun(Loc.S("whatReprobe"), Optimizer.Run);          // 用游戏真价重算 HUD
         }
     }
 
@@ -314,11 +318,11 @@ public static class PriceProbe
             if (_src != null) _src.UncheckedAccept(item);
             var back = Ref.Get(item, "parentInventory") as GameInventory;
             if (Ptr(back) != srcPtr)
-                MelonLogger.Warning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
+                MelonLogger.Warning(Loc.S("warnNotReturned", NameOf(item)));
         }
         catch (Exception e)
         {
-            MelonLogger.Warning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
+            MelonLogger.Warning(Loc.S("warnReturnError", NameOf(item), e.Message));
         }
     }
 
@@ -383,7 +387,7 @@ public static class ClientInfo
         foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add(LocalizeTag(x?.ToString()));
         foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add(LocalizeId(x?.ToString()));
         var s = string.Join("、", parts);
-        return s.Length == 0 ? "无限制" : s;
+        return s.Length == 0 ? Loc.S("unlimited") : s;
     }
 
     /// <summary>物品 key → 中文类型名：type_household_good → 日用品（Mechanic 表）。查不到就用原值。</summary>
@@ -501,7 +505,7 @@ public static class Optimizer
         var c = Patches.CurrentClient;
         if (c == null)
         {
-            Result.Set("BestDeal", new[] { "暂无顾客（等顾客上门后自动提示）" });
+            Result.Set("BestDeal", new[] { Loc.S("noCustomer") });
             return;
         }
 
@@ -512,12 +516,12 @@ public static class Optimizer
         {
             // 一样都没定价：可能只是还没探测（本来就会自动探），别急着说"他不买"
             string note = PriceProbe.Running
-                ? "正在逐件摆上柜台探测价格…（探完自动更新）"
-                : (_unpriced > 0 ? $"候选 {_unpriced} 件，价格还没探到（自动重探中）"
-                                 : "他不会买你店里的任何东西");
+                ? Loc.S("probingNow")
+                : (_unpriced > 0 ? Loc.S("unpricedRetry", _unpriced)
+                                 : Loc.S("buysNothing"));
             Result.Set($"BestDeal — {name}", new[]
             {
-                $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}",
+                Loc.S("head", name, SafeGetBudget(c), ClientInfo.TagsSummary(c)),
                 note,
             });
             return;
@@ -579,9 +583,9 @@ public static class Optimizer
             }
         }
 
-        string head = $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}" +
-                      (requireVariety ? "  [要求不重复]" : "");
-        string skippedNote = _unpriced > 0 ? $"（另 {_unpriced} 件未探到价已跳过）" : "";
+        string head = Loc.S("head", name, SafeGetBudget(c), ClientInfo.TagsSummary(c)) +
+                      (requireVariety ? Loc.S("requireVariety") : "");
+        string skippedNote = _unpriced > 0 ? Loc.S("skippedUnpriced", _unpriced) : "";
 
         // 候选都在预算之外：顾客一件也买不起（别推荐超预算的东西）
         if (picked.Count == 0)
@@ -589,7 +593,7 @@ public static class Optimizer
             Result.Set($"BestDeal — {name}", new[]
             {
                 head,
-                $"候选 {cands.Count} 件，但最便宜的也要 {cands.Min(x => x.Price)}，超出预算，他一件也买不起",
+                Loc.S("tooExpensive", cands.Count, cands.Min(x => x.Price)),
             });
             return;
         }
@@ -600,13 +604,13 @@ public static class Optimizer
         var lines = new List<string>
         {
             head,
-            $"可售出总额：{total}" +
-            (Ref.ToLong(SafeGetBudget(c), 0) > 0 ? $"（剩预算 {Math.Max(0, budget - total)}）" : "") +
-            $"，候选 {cands.Count} 件" + skippedNote,
+            Loc.S("totalSold", total) +
+            (Ref.ToLong(SafeGetBudget(c), 0) > 0 ? Loc.S("budgetLeft", Math.Max(0, budget - total)) : "") +
+            Loc.S("candidateCount", cands.Count) + skippedNote,
         };
         foreach (var p in picked)
-            lines.Add($"→ {p.Name} ×{p.Count} = {p.Price}");
-        lines.Add($"共 {picked.Count} 件");
+            lines.Add(Loc.S("pickLine", p.Name, p.Count, p.Price));
+        lines.Add(Loc.S("pickCount", picked.Count));
 
         Result.Set($"BestDeal — {name}", lines);
     }
@@ -733,7 +737,7 @@ public static class ShopInventories
         var entry = EmporiumEntry.Instance;
         if (entry == null)
         {
-            MelonLogger.Warning("EmporiumEntry.Instance 为空（不在店内场景？）");
+            MelonLogger.Warning(Loc.S("warnNoEmporium"));
             yield break;
         }
 
