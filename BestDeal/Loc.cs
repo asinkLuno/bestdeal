@@ -55,7 +55,7 @@ public static class Loc
         ["budgetLeft"]      = new[] { "（剩预算 {0}）", " (budget left {0})" },
         ["candidateCount"]  = new[] { "，候选 {0} 件", ", {0} candidates" },
         ["skippedUnpriced"] = new[] { "（另 {0} 件未探到价已跳过）", " ({0} without a price skipped)" },
-        ["pickLine"]        = new[] { "→ {0} ×{1} = {2}", "→ {0} x{1} = {2}" },
+        ["pickLine"]        = new[] { "{0} ×{1} = {2}", "{0} x{1} = {2}" },
         ["pickCount"]       = new[] { "共 {0} 件", "{0} items" },
         ["probeStatus"]     = new[] { "价格探测中 {0}/{1}：物品会短暂摆上柜台，读完价自动收回",
                                       "Reading prices {0}/{1}: items briefly go on the counter, then back" },

@@ -55,7 +55,15 @@ public class Plugin : MelonMod
         GUI.Box(rect, Result.Title);
         int i = 0;
         for (; i < Result.Lines.Count; i++)
-            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), Result.Lines[i]);
+        {
+            string line = Result.Lines[i];
+            if (i >= Result.PickLineStart && i < Result.PickLineStart + Result.PickedItems.Count)
+            {
+                var item = Result.PickedItems[i - Result.PickLineStart];
+                line = (PriceProbe.IsOnCounter(item) ? "✔ " : "- ") + line;
+            }
+            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), line);
+        }
         if (status != null)
             GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
     }
@@ -66,11 +74,18 @@ public static class Result
 {
     public static string Title = "BestDeal";
     public static readonly List<string> Lines = new();
-    public static void Set(string title, IEnumerable<string> lines)
+    public static readonly List<GameItem> PickedItems = new();
+    public static int PickLineStart = -1;
+
+    public static void Set(string title, IEnumerable<string> lines,
+                           IEnumerable<GameItem> pickedItems = null, int pickLineStart = -1)
     {
         Title = title;
         Lines.Clear();
         Lines.AddRange(lines);
+        PickedItems.Clear();
+        if (pickedItems != null) PickedItems.AddRange(pickedItems);
+        PickLineStart = PickedItems.Count > 0 ? pickLineStart : -1;
     }
 }
 
@@ -233,6 +248,18 @@ public static class PriceProbe
     {
         try { return Prices.TryGetValue((long)((Il2CppObjectBase)gi).Pointer, out var v) ? v : 0; }
         catch { return 0; }
+    }
+
+    /// <summary>推荐物品是否已经被玩家放到顾客可见的后柜台。</summary>
+    public static bool IsOnCounter(GameItem gi)
+    {
+        try
+        {
+            var inv = Ref.Get(gi, "parentInventory") as GameInventory;
+            var id = Ref.Get(inv, "identifier", "")?.ToString() ?? "";
+            return id.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch { return false; }
     }
 
     /// <summary>给当前顾客安排一轮探测（每件约 0.25 秒）。找不到柜台就返回 false（什么也不动）。</summary>
@@ -612,7 +639,7 @@ public static class Optimizer
             lines.Add(Loc.S("pickLine", p.Name, p.Count, p.Price));
         lines.Add(Loc.S("pickCount", picked.Count));
 
-        Result.Set($"BestDeal — {name}", lines);
+        Result.Set($"BestDeal — {name}", lines, picked.Select(p => p.Item), pickLineStart: 2);
     }
 
     static object SafeGetBudget(StoreClient c)
