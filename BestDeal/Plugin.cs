@@ -605,7 +605,7 @@ public static class Optimizer
             $"，候选 {cands.Count} 件" + skippedNote,
         };
         foreach (var p in picked)
-            lines.Add($"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
+            lines.Add($"→ {p.Name} ×{p.Count} = {p.Price}");
         lines.Add($"共 {picked.Count} 件");
 
         Result.Set($"BestDeal — {name}", lines);
