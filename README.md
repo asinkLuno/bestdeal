@@ -1,6 +1,6 @@
 # BestDeal — Probably Stolen Demo 顾客推荐 mod
 
-游戏：Probably Stolen（Demo，Steam AppID 4349200 / Unity IL2CPP）。BepInEx 6 插件。
+游戏：Probably Stolen（Demo，Steam AppID 4349200 / Unity IL2CPP）。MelonLoader mod。
 
 ## 做什么
 
@@ -16,10 +16,16 @@
 
 ## 构建
 
+前置：游戏里已装 MelonLoader 0.7.x，并且**启动过一次游戏**（生成 `MelonLoader/Il2CppAssemblies/`，构建要引用它）。
+
 ```bash
-dotnet build BestDeal -c Release                   # 构建并自动部署到游戏 BepInEx/plugins/
+dotnet build BestDeal -c Release                   # 构建并自动部署到游戏 Mods/
 dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 ```
 
 需要 .NET 6 SDK。默认游戏路径 `/home/guozr/.local/share/Steam/steamapps/common/Probably Stolen Demo`，
 可用 `-p:GameDir=...` 覆盖。
+
+坑：MelonLoader 生成的代理程序集把游戏类型放在 **`Il2Cpp` 命名空间**（BepInEx 版是全局命名空间），
+所以源码里有 `using Il2Cpp;`；Unity 类型仍在 `UnityEngine`。Harmony 补丁由 MelonLoader 自动应用，
+**不要**自己再调 `PatchAll`（会重复打）。

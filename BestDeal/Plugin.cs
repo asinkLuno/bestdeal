@@ -2,13 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using BepInEx;
-using BepInEx.Logging;
-using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Runtime.Injection;
+using Il2Cpp;                    // MelonLoader 生成的代理把游戏类型（原本全局命名空间）放进 Il2Cpp.*；Unity 类型仍是 UnityEngine.*
 using Il2CppInterop.Runtime.InteropTypes;
+using MelonLoader;
 using UnityEngine;
+
+[assembly: MelonInfo(typeof(BestDeal.Plugin), "BestDeal", "1.5.0", "guozr")]
+[assembly: MelonID("guozr.skdp.bestdeal")]
+[assembly: MelonGame("Questing Goose Studio", "Probably Stolen")]
 
 namespace BestDeal;
 
@@ -20,35 +22,34 @@ namespace BestDeal;
 /// 需求同样读游戏自己的字段：clientBuyingTagList / clientBuyingIdList（到店几秒后才填，轮询刷新）、
 /// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件，分组背包）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.2")]
-public class Plugin : BasePlugin
+/// <summary>
+/// 装载层：MelonLoader（社区标准；BepInEx 版见 main 分支 v1.4.2）。
+/// 逻辑与 v1.4.x 一致——Harmony 补丁由 MelonLoader 自动应用（**不要**自己 PatchAll，会重复打），
+/// HUD 与每帧轮询改用 MelonMod 自带的 OnGUI/OnUpdate，不再需要往 il2cpp 注入 MonoBehaviour。
+/// </summary>
+public class Plugin : MelonMod
 {
-    internal static new ManualLogSource Log;
-    private Harmony _harmony;
-
-    public override void Load()
+    public override void OnInitializeMelon()
     {
-        Log = base.Log;
-        _harmony = new Harmony("guozr.skdp.bestdeal");
-        _harmony.PatchAll(typeof(Patches));
-
-        ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.4.2 已加载");
+        MelonLogger.Msg("BestDeal v1.5.0 已加载（MelonLoader）");
     }
 
-    internal static void EnsureHud()
+    // 自己的 OnUpdate 每帧一定会被调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
+    public override void OnUpdate() => Patches.Poll();
+
+    public override void OnGUI()
     {
-        if (Hud.Instance != null) return;
-        try
-        {
-            var go = new GameObject("BestDealHud");
-            UnityEngine.Object.DontDestroyOnLoad(go);
-            go.AddComponent(Il2CppInterop.Runtime.Il2CppType.Of<Hud>()).TryCast<Hud>();
-        }
-        catch (Exception e)
-        {
-            Log.LogWarning($"HUD 创建失败：{e.Message}");
-        }
+        var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
+        int total = Result.Lines.Count + (status == null ? 0 : 1);
+        if (total == 0) return;
+        float width = Mathf.Min(560f, Screen.width - 32f);
+        var rect = new Rect(16, 16, width, 64 + total * 22);
+        GUI.Box(rect, Result.Title);
+        int i = 0;
+        for (; i < Result.Lines.Count; i++)
+            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), Result.Lines[i]);
+        if (status != null)
+            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
     }
 }
 
@@ -62,39 +63,6 @@ public static class Result
         Title = title;
         Lines.Clear();
         Lines.AddRange(lines);
-    }
-}
-
-/// <summary>游戏内悬浮窗（只负责画）。</summary>
-public class Hud : MonoBehaviour
-{
-    public Hud(IntPtr h) : base(h) { }
-    internal static Hud Instance;
-
-    private void Awake()
-    {
-        Instance = this;
-    }
-
-    // 自己的 Update 一定会被 Unity 调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
-    private void Update()
-    {
-        Patches.Poll();
-    }
-
-    private void OnGUI()
-    {
-        var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
-        int total = Result.Lines.Count + (status == null ? 0 : 1);
-        if (total == 0) return;
-        float width = Mathf.Min(560f, Screen.width - 32f);
-        var rect = new Rect(16, 16, width, 64 + total * 22);
-        GUI.Box(rect, Result.Title);
-        int i = 0;
-        for (; i < Result.Lines.Count; i++)
-            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), Result.Lines[i]);
-        if (status != null)
-            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
     }
 }
 
@@ -116,7 +84,6 @@ public static class Patches
         _arrivedAt = Time.unscaledTime;
         _probedPtr = 0;
         PriceProbe.Stop(CurrentClient);
-        Plugin.EnsureHud();
         TryRun("自动计算", Optimizer.Run);
         _lastReqSig = SafeSig(__instance);
     }
@@ -158,7 +125,7 @@ public static class Patches
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"Poll: {e}");
+            MelonLogger.Error($"Poll: {e}");
         }
     }
 
@@ -219,7 +186,7 @@ public static class Patches
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[{what}] 失败：{e}");
+            MelonLogger.Error($"[{what}] 失败：{e}");
         }
     }
 }
@@ -265,7 +232,7 @@ public static class PriceProbe
         var dst = FindCounter();
         if (dst == null)
         {
-            Plugin.Log.LogWarning("价格探测：没找到后柜台（backInv），本轮跳过");
+            MelonLogger.Warning("价格探测：没找到后柜台（backInv），本轮跳过");
             return false;
         }
         Prices.Clear();
@@ -301,11 +268,11 @@ public static class PriceProbe
             try { _src = Ref.Get(gi, "parentInventory") as GameInventory; } catch { _src = null; }
             if (_src == null) return;
             _cur = gi;
-            try { _src.Expel(gi); } catch (Exception e) { Plugin.Log.LogWarning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
+            try { _src.Expel(gi); } catch (Exception e) { MelonLogger.Warning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
             try { _dst.UncheckedAccept(gi); }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"价格探测：上柜台失败，已放回：{e.Message}");
+                MelonLogger.Warning($"价格探测：上柜台失败，已放回：{e.Message}");
                 try { _src.UncheckedAccept(gi); } catch { }
                 _cur = null;
                 return;
@@ -342,11 +309,11 @@ public static class PriceProbe
             if (_src != null) _src.UncheckedAccept(item);
             var back = Ref.Get(item, "parentInventory") as GameInventory;
             if (Ptr(back) != srcPtr)
-                Plugin.Log.LogWarning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
+                MelonLogger.Warning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
+            MelonLogger.Warning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
         }
     }
 
@@ -761,7 +728,7 @@ public static class ShopInventories
         var entry = EmporiumEntry.Instance;
         if (entry == null)
         {
-            Plugin.Log.LogWarning("EmporiumEntry.Instance 为空（不在店内场景？）");
+            MelonLogger.Warning("EmporiumEntry.Instance 为空（不在店内场景？）");
             yield break;
         }
 

@@ -8,45 +8,53 @@
     <Nullable>disable</Nullable>
     <!-- 覆盖方式：dotnet build -p:GameDir=... -->
     <GameDir Condition="'$(GameDir)' == ''">/home/guozr/.local/share/Steam/steamapps/common/Probably Stolen Demo</GameDir>
+    <!-- MelonLoader 装在游戏根目录：框架 dll 在 MelonLoader/net6/，游戏代理程序集在 MelonLoader/Il2CppAssemblies/（首次启动游戏后生成） -->
+    <MelonLoaderDir Condition="'$(MelonLoaderDir)' == ''">$(GameDir)/MelonLoader</MelonLoaderDir>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="BepInEx.Core">
-      <HintPath>$(GameDir)/BepInEx/core/BepInEx.Core.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx.Unity.IL2CPP">
-      <HintPath>$(GameDir)/BepInEx/core/BepInEx.Unity.IL2CPP.dll</HintPath>
-    </Reference>
-    <Reference Include="Il2CppInterop.Runtime">
-      <HintPath>$(GameDir)/BepInEx/core/Il2CppInterop.Runtime.dll</HintPath>
+    <Reference Include="MelonLoader">
+      <HintPath>$(MelonLoaderDir)/net6/MelonLoader.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>$(GameDir)/BepInEx/core/0Harmony.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/net6/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(MelonLoaderDir)/net6/Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>$(GameDir)/BepInEx/interop/Assembly-CSharp.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Il2Cppmscorlib">
-      <HintPath>$(GameDir)/BepInEx/interop/Il2Cppmscorlib.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Il2CppSystem">
-      <HintPath>$(GameDir)/BepInEx/interop/Il2CppSystem.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/Il2CppSystem.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>$(GameDir)/BepInEx/interop/UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>$(MelonLoaderDir)/Il2CppAssemblies/UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(Deploy)' != 'false'">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/" />
-    <Message Importance="high" Text="已部署到 $(GameDir)/BepInEx/plugins/" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/Mods/" />
+    <Message Importance="high" Text="已部署到 $(GameDir)/Mods/" />
   </Target>
 
 </Project>
