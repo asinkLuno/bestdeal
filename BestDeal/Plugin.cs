@@ -33,7 +33,7 @@ namespace BestDeal;
 /// </summary>
 public class Plugin : MelonMod
 {
-    public const string Version = "1.6.0";
+    public const string Version = "1.6.1";
 
     public override void OnInitializeMelon()
     {
@@ -173,24 +173,6 @@ public static class InspectionDetails
     private static string _detailsCache;
     private static bool _detailsRead;
 
-    private static readonly (string Tag, string Label)[] CigaretteIssueTags =
-    {
-        ("CIGARETTE_BOX_ISSUE", "cigaretteIssueBox"),
-        ("CIGARETTE_COLOR_ISSUE", "cigaretteIssueColor"),
-        ("CIGARETTE_LETTERING_ISSUE", "cigaretteIssueLettering"),
-        ("CIGARETTE_LOGO_ISSUE", "cigaretteIssueLogo"),
-        ("CIGARETTE_SEAL_ISSUE", "cigaretteIssueSeal"),
-    };
-
-    private static readonly (string Tag, string Label)[] InjectorIssueTags =
-    {
-        ("ISSUE_BODY", "injectorIssueBody"),
-        ("ISSUE_COLOR", "injectorIssueColor"),
-        ("ISSUE_INDICATOR", "injectorIssueIndicator"),
-        ("ISSUE_LABEL", "injectorIssueLabel"),
-        ("ISSUE_SERIAL", "injectorIssueSerial"),
-    };
-
     public static string Read(GameItem item)
     {
         if (item == null) return null;
@@ -219,17 +201,6 @@ public static class InspectionDetails
                 : isCigarette ? "Il2Cpp.InsCigaretteHelper"
                 : isAppHand ? "Il2Cpp.AppHandHelper"
                 : null;
-
-            if (isInjector)
-            {
-                var issues = IssueDetails(item, InjectorIssueTags);
-                if (!string.IsNullOrWhiteSpace(issues)) return issues;
-            }
-            if (isCigarette)
-            {
-                var issues = IssueDetails(item, CigaretteIssueTags);
-                if (!string.IsNullOrWhiteSpace(issues)) return issues;
-            }
 
             // 各类商品优先用游戏自己的检查 helper；其它可检查商品走通用 helper。
             string details = helperName == null ? null : BuildHelperTooltip(helperName, "CreateDebugTooltip", item);
@@ -262,14 +233,6 @@ public static class InspectionDetails
     private static bool IsStamp(GameItem item, string identity)
     {
         return HasTag(item, "INS_STAMP_TAG") || identity.Contains("stamp");
-    }
-
-    private static string IssueDetails(GameItem item, (string Tag, string Label)[] issueTags)
-    {
-        var reasons = new List<string>();
-        foreach (var issue in issueTags)
-            if (HasTag(item, issue.Tag)) reasons.Add(Loc.S(issue.Label));
-        return reasons.Count == 0 ? null : string.Join(Loc.S("issueSeparator"), reasons);
     }
 
     private static string BuildHelperTooltip(string helperName, string methodName, GameItem item)

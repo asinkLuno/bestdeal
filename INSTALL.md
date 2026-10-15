@@ -59,7 +59,7 @@ MelonLoader 是这个游戏所有 mod 的前置（N 网专区的 mod 全部要�
 
 ```
 Melon Assembly loaded: '.\Mods\BestDeal.dll'
-[BestDeal] BestDeal v1.6.0 已启动（补丁：3）
+[BestDeal] BestDeal v1.6.1 已启动（补丁：3）
 ```
 
 游戏里：顾客走到柜台开始对话后，屏幕**左上角出现推荐清单**（顾客/预算/类别 + 建议拿上柜台的物品和游戏给的价格）。放大镜选中可检查商品时，HUD 会显示该商品的检查信息和发现的问题；鉴定服务窗口打开时，HUD 会显示当前商品的鉴定估值。
