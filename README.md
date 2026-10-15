@@ -26,6 +26,11 @@ dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 需要 .NET 6 SDK。默认游戏路径 `/home/guozr/.local/share/Steam/steamapps/common/Probably Stolen Demo`，
 可用 `-p:GameDir=...` 覆盖。
 
-坑：MelonLoader 生成的代理程序集把游戏类型放在 **`Il2Cpp` 命名空间**（BepInEx 版是全局命名空间），
-所以源码里有 `using Il2Cpp;`；Unity 类型仍在 `UnityEngine`。Harmony 补丁由 MelonLoader 自动应用，
-**不要**自己再调 `PatchAll`（会重复打）。
+坑（都踩过）：
+
+- MelonLoader 生成的代理程序集把游戏类型放在 **`Il2Cpp` 命名空间**（BepInEx 版是全局命名空间），
+  所以源码里有 `using Il2Cpp;`；Unity 类型仍在 `UnityEngine`。
+- MelonLoader 的**自动**打补丁等价于 `Harmony.PatchAll(Assembly)`，要求补丁类带类级 `[HarmonyPatch]`。
+  本 mod 的补丁类只有方法级注解 → 自动打补丁会**静默一个都不打**，症状是 HUD 完全不出现。
+  所以文件头有 `[assembly: HarmonyDontPatchAll]`，改在 `OnInitializeMelon` 里显式
+  `TryPatchAll(typeof(Patches), true)`（即 BepInEx 版语义）；启动日志会报补丁数，掉了就是没打上。

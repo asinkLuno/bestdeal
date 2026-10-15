@@ -11,6 +11,10 @@ using UnityEngine;
 [assembly: MelonInfo(typeof(BestDeal.Plugin), "BestDeal", "1.5.0", "guozr")]
 [assembly: MelonID("guozr.skdp.bestdeal")]
 [assembly: MelonGame("Questing Goose Studio", "Probably Stolen")]
+// 关掉 MelonLoader 的自动打补丁：它等价于 Harmony.PatchAll(Assembly)，要求补丁类带**类级**
+// [HarmonyPatch] 注解；本 mod 的补丁类只有方法级注解 → 自动打补丁会一个都不打（实测踩过）。
+// 改成在 OnInitializeMelon 里显式打（等价于 BepInEx 版的 PatchAll(typeof(Patches))）。
+[assembly: HarmonyDontPatchAll]
 
 namespace BestDeal;
 
@@ -31,7 +35,8 @@ public class Plugin : MelonMod
 {
     public override void OnInitializeMelon()
     {
-        MelonLogger.Msg("BestDeal v1.5.0 已加载（MelonLoader）");
+        var patched = HarmonyInstance.TryPatchAll(typeof(Patches), true);   // true = 允许类上没有注解（BepInEx 版语义）
+        MelonLogger.Msg($"BestDeal v1.5.0 已加载（MelonLoader，已打补丁 {patched?.Count ?? 0} 处）");
     }
 
     // 自己的 OnUpdate 每帧一定会被调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
