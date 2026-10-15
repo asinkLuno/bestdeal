@@ -59,10 +59,10 @@ MelonLoader 是这个游戏所有 mod 的前置（N 网专区的 mod 全部要�
 
 ```
 Melon Assembly loaded: '.\Mods\BestDeal.dll'
-[BestDeal] BestDeal v1.5.0 已加载（MelonLoader，已打补丁 3 处）
+[BestDeal] BestDeal v1.6.0 已启动（补丁：3）
 ```
 
-游戏里：顾客走到柜台开始对话后，屏幕**左上角出现推荐清单**（顾客/预算/类别 + 建议拿上柜台的物品和游戏给的价格）。
+游戏里：顾客走到柜台开始对话后，屏幕**左上角出现推荐清单**（顾客/预算/类别 + 建议拿上柜台的物品和游戏给的价格）。放大镜选中可检查商品时，HUD 会显示该商品的检查信息和发现的问题；鉴定服务窗口打开时，HUD 会显示当前商品的鉴定估值。
 没有顾客时左上角是空的，这是正常的。
 
 ---
@@ -77,7 +77,7 @@ Melon Assembly loaded: '.\Mods\BestDeal.dll'
 | 首次启动很久没动静 | 正常，Cpp2IL 在生成代理程序集（几分钟），等它跑完 |
 | 以前装过 BepInEx | MelonLoader 和 BepInEx 在同一个游戏里**不能共存**，二选一。要用本 mod 就得把 BepInEx 的 `winhttp.dll` 移走 |
 | 游戏更新后 mod 失效 | 删掉 `MelonLoader/Il2CppAssemblies/`，让 MelonLoader 按新版游戏重新生成，再启动一次 |
-| 想确认 mod 有没有打上补丁 | 看启动日志那行 `已打补丁 3 处`；显示 0 处就是加载了但补丁没生效 |
+| 想确认 mod 有没有打上补丁 | 看启动日志里的 `补丁：3`；显示 0 就是加载了但补丁没生效 |
 
 ---
 

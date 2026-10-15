@@ -33,7 +33,7 @@ namespace BestDeal;
 /// </summary>
 public class Plugin : MelonMod
 {
-    public const string Version = "1.5.0";
+    public const string Version = "1.6.0";
 
     public override void OnInitializeMelon()
     {
@@ -48,7 +48,14 @@ public class Plugin : MelonMod
     public override void OnGUI()
     {
         var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
-        int total = Result.Lines.Count + (status == null ? 0 : 1);
+        var appraisalServiceItem = ItemInspection.AppraisalServiceItem();
+        var magnifiedItem = ItemInspection.CurrentInspectionItem();
+        var inspectedItem = appraisalServiceItem ?? magnifiedItem;
+        bool isAppraisalService = appraisalServiceItem != null;
+        long? appraisalPrice = isAppraisalService ? AppraisalValue.CorrectBasePrice(appraisalServiceItem) : null;
+        string inspectionDetails = magnifiedItem == null ? null : InspectionDetails.Read(magnifiedItem);
+        int inspectionRows = inspectedItem == null ? 0 : 1 + (appraisalPrice.HasValue ? 1 : 0) + (inspectionDetails == null ? 0 : 2);
+        int total = Result.Lines.Count + inspectionRows + (status == null ? 0 : 1);
         if (total == 0) return;
         float width = Mathf.Min(560f, Screen.width - 32f);
         var rect = new Rect(16, 16, width, 64 + total * 22);
@@ -64,8 +71,248 @@ public class Plugin : MelonMod
             }
             GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), line);
         }
+        if (inspectedItem != null)
+        {
+            string name = Ref.Get(inspectedItem, "name", "?")?.ToString() ?? "?";
+            GUI.Label(new Rect(30, 46 + i++ * 22, rect.width - 28, 22),
+                      Loc.S(isAppraisalService ? "appraisalItem" : "inspectionItem", name));
+            if (appraisalPrice.HasValue)
+                GUI.Label(new Rect(30, 46 + i++ * 22, rect.width - 28, 22),
+                          Loc.S("appraisalServicePrice", appraisalPrice.Value));
+            if (inspectionDetails != null)
+            {
+                GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 44),
+                          Loc.S("inspectionDetails", inspectionDetails));
+                i += 2;
+            }
+        }
         if (status != null)
             GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
+    }
+}
+
+/// <summary>读取放大镜或鉴定服务当前选中的商品。</summary>
+public static class ItemInspection
+{
+    public static GameItem CurrentInspectionItem()
+    {
+        try
+        {
+            var instance = Instance();
+            if (!IsPanelActive(Ref.Get(instance, "panel"))) return null;
+            var selected = Ref.Get(instance, "currentInspectingItem") as GameItem;
+            return selected;
+        }
+        catch { return null; }
+    }
+
+    public static GameItem AppraisalServiceItem()
+    {
+        try
+        {
+            var instance = Instance();
+            if (!IsPanelActive(Ref.Get(instance, "appraisalPanel"))) return null;
+            return Ref.Get(instance, "currentInspectingItem") as GameItem;
+        }
+        catch { return null; }
+    }
+
+    private static object Instance()
+    {
+        var type = typeof(GameItem).Assembly.GetType("Il2Cpp.InspectionUIManager");
+        return type?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+    }
+
+    private static bool IsPanelActive(object panel)
+    {
+        if (panel == null) return false;
+        var active = Ref.Get(panel, "activeInHierarchy") ?? Ref.Get(panel, "activeSelf");
+        return active != null && Convert.ToBoolean(active.ToString());
+    }
+}
+
+/// <summary>读取游戏鉴定系统计算的商品正确基准估值。</summary>
+public static class AppraisalValue
+{
+    private static readonly Dictionary<long, long?> PriceCache = new();
+
+    public static long? CorrectBasePrice(GameItem item)
+    {
+        if (item == null) return null;
+        long pointer = Ref.Pointer(item);
+        if (pointer != 0 && PriceCache.TryGetValue(pointer, out var cachedPrice)) return cachedPrice;
+
+        long? price = ReadCorrectBasePrice(item);
+        if (pointer != 0)
+        {
+            if (PriceCache.Count >= 256) PriceCache.Clear();
+            PriceCache[pointer] = price;
+        }
+        return price;
+    }
+
+    private static long? ReadCorrectBasePrice(GameItem item)
+    {
+        try
+        {
+            var helper = typeof(GameItem).Assembly.GetType("Il2Cpp.AppraisalHelper");
+            var method = helper?.GetMethod("GetCorrectBaseValue", BindingFlags.Public | BindingFlags.Static,
+                                           null, new[] { typeof(GameItem) }, null);
+            if (method == null) return null;
+            long price = Convert.ToInt64(method.Invoke(null, new object[] { item }));
+            return price > 0 ? price : null;
+        }
+        catch { return null; }
+    }
+}
+
+/// <summary>读取放大镜当前选中商品的缺陷信息。</summary>
+public static class InspectionDetails
+{
+    private static long _detailsItemPointer;
+    private static string _detailsCache;
+    private static bool _detailsRead;
+
+    private static readonly (string Tag, string Label)[] CigaretteIssueTags =
+    {
+        ("CIGARETTE_BOX_ISSUE", "cigaretteIssueBox"),
+        ("CIGARETTE_COLOR_ISSUE", "cigaretteIssueColor"),
+        ("CIGARETTE_LETTERING_ISSUE", "cigaretteIssueLettering"),
+        ("CIGARETTE_LOGO_ISSUE", "cigaretteIssueLogo"),
+        ("CIGARETTE_SEAL_ISSUE", "cigaretteIssueSeal"),
+    };
+
+    private static readonly (string Tag, string Label)[] InjectorIssueTags =
+    {
+        ("ISSUE_BODY", "injectorIssueBody"),
+        ("ISSUE_COLOR", "injectorIssueColor"),
+        ("ISSUE_INDICATOR", "injectorIssueIndicator"),
+        ("ISSUE_LABEL", "injectorIssueLabel"),
+        ("ISSUE_SERIAL", "injectorIssueSerial"),
+    };
+
+    public static string Read(GameItem item)
+    {
+        if (item == null) return null;
+        long pointer = Ref.Pointer(item);
+        if (_detailsRead && pointer != 0 && pointer == _detailsItemPointer) return _detailsCache;
+
+        _detailsItemPointer = pointer;
+        _detailsRead = pointer != 0;
+        _detailsCache = ReadDetails(item);
+        return _detailsCache;
+    }
+
+    private static string ReadDetails(GameItem item)
+    {
+        try
+        {
+            string identity = ItemIdentity(item).ToLowerInvariant();
+            bool isCigarette = identity.Contains("cig") || HasTag(item, "CIGARETTE_TAG");
+            bool isInjector = IsInjector(item, identity);
+            bool isRibwich = identity.Contains("ribwich");
+            bool isStamp = IsStamp(item, identity);
+            bool isAppHand = identity.Replace("_", "").Replace(" ", "").Contains("apphand");
+            string helperName = isRibwich ? "Il2Cpp.RibwichHelper"
+                : isStamp ? "Il2Cpp.InsStampHelper"
+                : isInjector ? "Il2Cpp.InsInjectorHelper"
+                : isCigarette ? "Il2Cpp.InsCigaretteHelper"
+                : isAppHand ? "Il2Cpp.AppHandHelper"
+                : null;
+
+            if (isInjector)
+            {
+                var issues = IssueDetails(item, InjectorIssueTags);
+                if (!string.IsNullOrWhiteSpace(issues)) return issues;
+            }
+            if (isCigarette)
+            {
+                var issues = IssueDetails(item, CigaretteIssueTags);
+                if (!string.IsNullOrWhiteSpace(issues)) return issues;
+            }
+
+            // 各类商品优先用游戏自己的检查 helper；其它可检查商品走通用 helper。
+            string details = helperName == null ? null : BuildHelperTooltip(helperName, "CreateDebugTooltip", item);
+            if (string.IsNullOrWhiteSpace(details))
+                details = BuildHelperTooltip("Il2Cpp.InspectableHelper", "CreateInspectableTooltip", item);
+            if (string.IsNullOrWhiteSpace(details)) return null;
+
+            details = string.Join(" ", details.Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+            return details.Length > 110 ? details.Substring(0, 107) + "…" : details;
+        }
+        catch { return null; }
+    }
+
+    private static string ItemIdentity(GameItem item)
+    {
+        return string.Join(" ", new[]
+        {
+            Ref.Get(item, "identifier", "")?.ToString(),
+            Ref.Get(item, "identifierName", "")?.ToString(),
+            Ref.Get(item, "name", "")?.ToString(),
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static bool IsInjector(GameItem item, string identity)
+    {
+        return HasTag(item, "INS_INJECTOR_TAG") || identity.Contains("inject") ||
+               identity.Contains("immunivax") || identity.Contains("免疫宁");
+    }
+
+    private static bool IsStamp(GameItem item, string identity)
+    {
+        return HasTag(item, "INS_STAMP_TAG") || identity.Contains("stamp");
+    }
+
+    private static string IssueDetails(GameItem item, (string Tag, string Label)[] issueTags)
+    {
+        var reasons = new List<string>();
+        foreach (var issue in issueTags)
+            if (HasTag(item, issue.Tag)) reasons.Add(Loc.S(issue.Label));
+        return reasons.Count == 0 ? null : string.Join(Loc.S("issueSeparator"), reasons);
+    }
+
+    private static string BuildHelperTooltip(string helperName, string methodName, GameItem item)
+    {
+        try
+        {
+            var assembly = typeof(GameItem).Assembly;
+            var helper = assembly.GetType(helperName);
+            var builderType = assembly.GetType("Il2Cpp.RichTextBuilder");
+            if (helper == null || builderType == null) return null;
+
+            var constructor = builderType.GetConstructor(new[] { typeof(int) });
+            var builder = constructor?.Invoke(new object[] { 512 });
+            if (builder == null) return null;
+
+            var createTooltip = helper.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static,
+                null, new[] { builderType, typeof(GameItem) }, null);
+            if (createTooltip == null) return null;
+            createTooltip.Invoke(null, new[] { builder, item });
+            var build = builderType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { typeof(int) }, null);
+            var richText = build?.Invoke(builder, new object[] { 512 });
+            string details = Ref.Get(richText, "nakedText")?.ToString();
+            return string.IsNullOrWhiteSpace(details) ? null : details;
+        }
+        catch { return null; }
+    }
+
+    private static bool HasTag(GameItem item, string tag)
+    {
+        try
+        {
+            var state = Ref.Call1(item, "GetTagReadonly", tag);
+            if (state != null)
+            {
+                var enabled = Ref.Call0(state, "IsEnabled");
+                if (enabled != null) return Convert.ToBoolean(enabled.ToString());
+                return Ref.GetBool(state, "valueEnabled");
+            }
+
+            return Convert.ToBoolean(Ref.Call1(item, "IsTag", tag)?.ToString() ?? "false");
+        }
+        catch { return false; }
     }
 }
 
@@ -450,6 +697,12 @@ public static class ClientInfo
 /// <summary>反射小工具。</summary>
 public static class Ref
 {
+    public static long Pointer(object o)
+    {
+        try { return o == null ? 0 : (long)((Il2CppObjectBase)o).Pointer; }
+        catch { return 0; }
+    }
+
     public static object Get(object o, string prop, object def = null)
     {
         try
@@ -471,6 +724,18 @@ public static class Ref
             var m = o?.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance,
                                            null, Type.EmptyTypes, null);
             return m?.Invoke(o, null);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>调一个参数的方法。</summary>
+    public static object Call1(object o, string name, object arg)
+    {
+        try
+        {
+            var m = o?.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance,
+                                           null, new[] { typeof(string) }, null);
+            return m?.Invoke(o, new[] { arg });
         }
         catch { return null; }
     }
