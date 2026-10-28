@@ -23,6 +23,11 @@ public static class PriceProbe
         if (gi == null) return 0;
         try
         {
+            // 已在柜台的实例直接读真实价格，避免再次执行挂特征钩子。
+            if (ShopInventories.BackCounter?.childItems?.Contains(gi) == true
+                || ShopInventories.CounterAlt?.childItems?.Contains(gi) == true)
+                return gi.GetNegociatedValue();
+
             var saved = Snapshot(gi);
             try
             {
@@ -62,8 +67,19 @@ public static class PriceProbe
 
         // 钩子二（backInvinvElement.onSlotAddItemEndFunc → PlayerStore.AddedItemToWeightedArea）：
         // 零售加价、香水、成瘾/谈判惩罚、小费、违禁品/许可证、店内活动特征；
-        // ignoreOnItemAddedToWeighted=true 跳过顾客的反应回调（读价不该惊动顾客）。
-        gi.OnAddedToWeightedArea(ignoreOnItemAddedToWeighted: true);
+        // true 仅跳过 onItemAddedToWeighted，onItemAddedToCounters 仍会执行，
+        // 甚至启动剧情协程。同步读价时屏蔽实际当前顾客的柜台回调，并保证还原。
+        var activeClient = PlayerStore.Instance.currentClientInstance?.GetClientBlueprint();
+        var onCounters = activeClient?.onItemAddedToCounters;
+        try
+        {
+            if (activeClient != null) activeClient.onItemAddedToCounters = null;
+            gi.OnAddedToWeightedArea(ignoreOnItemAddedToWeighted: true);
+        }
+        finally
+        {
+            if (activeClient != null) activeClient.onItemAddedToCounters = onCounters;
+        }
     }
 
     /// <summary>挂特征前把物品和它所有子物品的特征列表原样备份（违禁品加价会挂到子物品上）。</summary>

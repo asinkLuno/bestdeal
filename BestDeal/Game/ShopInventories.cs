@@ -73,6 +73,7 @@ public static class ShopInventories
                 if (items == null) continue;
                 foreach (var gi in items) parts.Add(gi == null ? "-" : gi.GetHashCode().ToString());
             }
+            parts.Sort(System.StringComparer.Ordinal);
             return parts.Count + ":" + string.Join(",", parts);
         }
         catch { return null; }

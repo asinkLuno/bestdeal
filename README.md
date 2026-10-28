@@ -1,58 +1,35 @@
-# BestDeal — Probably Stolen 顾客推荐 mod
+# BestDeal
 
-游戏：Probably Stolen 正式版（Steam AppID 4349200 的 Demo 时代已过去；现在基于 Steam AppID 4348910、
-Unity Mono 后端）。使用游戏**原生 mod 加载器**（`Mods/` 文件夹 + `manifest.xml` + `IMod`），
-不再需要 BepInEx。
+Probably Stolen 顾客推荐 mod，适用于正式版 Unity Mono（Steam AppID 4348910）。使用游戏原生 mod 加载器和游戏自带的 Harmony。
 
-## 做什么
+- **顾客报价**：按需求、预算和不重复约束推荐售卖组合，显示库存位置、成交价及柜台就位标记。
+- **真伪提醒**：放大镜检查界面显示香烟、票券等物品的实际状态及标称是否一致，并逐条列出游戏记录的赝品依据（字样、颜色、封条等）；无可读取状态时明确提示无法判断。推荐物品另显示赝品问题，理由使用游戏本地化文本。
+- **鉴定提示**：检查台估价面板显示真实价值及当前输入的评级。
+- **开店前行情**：按当日新闻提示涨跌类别、适合摆橱窗的库存和收购牌。
 
-顾客走到柜台开始对话后，自动算出**这位顾客会买哪些东西、怎么卖最划算**，把结果列在屏幕左上角：
+价格调用游戏逻辑计算，物品不会被搬动。容器内部子物品的零售加价、大预算算法精度等边界见[系统设计](docs/design.md)。
 
-- 顾客是谁、预算多少、想买哪些类别（要求"不重复"的顾客会标出来）
-- 推荐拿上柜台的物品清单：每件物品从哪个库存拿、**游戏给这位顾客的售价**、合计收多少钱
-- 显示的价格就是游戏自己的成交价，照着把东西拿上柜台即可
-- 已经摆上柜台的推荐物品会标 ✔（同款有多件时，柜台上**任意一件**同款都算已就位）；赝品点会标 ⚠ 并给出**游戏自己的本地化理由**
-  （直接复用顾客识破赝品时的对话文本，跟随游戏语言；已被识破的会注明）
-- **鉴定估价提示**：鉴定顾客上门、你把物品拿到检查台弹出估价面板时，单独一框显示物品的**真实价值**
-  （游戏自己的判定值，照抄就是完美评级）和当前输入的评级（评级公式与阈值同游戏，名称复用游戏自己的
-  `appraisal_quality_*` 本地化表）。报价离谱会被拒并大幅消耗顾客耐心，两次就翻脸走人——照抄一次搞定
-- **开店前行情提示**：还没开店时显示当日新闻的涨跌价（读游戏自己的 StoreEvent，涨跌幅就是游戏实际
-  使用的百分比）：**涨价**类别会扫一遍库存，有现货就提示"摆橱窗：xxx ×n"，没有现货则提示改摆
-  **库存里最多的种类**；**降价**类别提示把对应类别的**收购牌**挂上橱窗（水/食物/医疗/材料/家居/
-  奢侈品/武器，名称用游戏自己的本地化）。一开 shutter 营业这个面板就自动消失，换回顾客推荐清单
+## 构建与安装
 
-读价不需要搬动物品：游戏只在物品摆上柜台时才把顾客的加价/折扣特征挂上去算出最终价，mod 在内存里
-复刻这条游戏自己的挂特征链路（挂上 → 读 `GetNegociatedValue` → 按快照还原），物品根本不会被搬动。
-
-推荐清单会在顾客到店、需求或柜台内容变化时自动更新，并始终显示。
-
-## 构建
+需要 .NET 8 SDK（开发工具与算法检查使用 net8.0；mod 目标框架为 netstandard2.1），以及本机安装的游戏。
 
 ```bash
-dotnet build BestDeal -c Release                   # 构建并自动部署到游戏 Mods/BestDeal/
-dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
+dotnet build BestDeal -c Release -p:Deploy=false  # 仅构建
+dotnet build BestDeal -c Release                 # 构建并部署
+# 覆盖默认游戏路径（路径有空格时保留引号）
+dotnet build BestDeal -c Release -p:GameDir="/path/to/Probably Stolen" -p:Deploy=false
 ```
 
-需要 .NET SDK（6.0+）。默认游戏路径 `/run/media/deck/SR256/steamapps/common/Probably Stolen`，
-可用 `-p:GameDir=...` 覆盖。构建会同时把 `BestDeal.dll` 和 `manifest.xml` 拷到游戏的
-`Mods/BestDeal/` 目录。
+默认游戏目录：`/run/media/deck/SR256/steamapps/common/Probably Stolen`。
+部署只复制 `BestDeal.dll` 和 `manifest.xml` 至 `Mods/BestDeal/`，不附带游戏或 Harmony 程序集。
 
-## 启用
+启动游戏 → 主菜单「模组」→ 启用 BestDeal → 重启。开发时可在模组详情开启开发者模式。
+F8 控制台可查看加载日志，运行 `mod-scan best_deal` 检查能力扫描；清单声明的能力为空。
 
-1. 启动游戏，主菜单打开 **模组** 菜单，选中 BestDeal 点 **启用**，重启游戏生效。
-2. 本地反复改代码迭代时，在模组详情面板打开 **开发者模式**，之后每次重新编译重启即可直接加载，
-   不用重新审批。
-3. 按 **F8** 打开调试控制台，能看到 `[BestDeal 最佳组合报价]: BestDeal v2.6.0 已加载`。
-4. 有疑问可在 F8 控制台跑 `mod-scan best_deal` 自查能力扫描结果（本 mod 清单里
-   `<Capabilities />` 为空，目标是零能力）。
+## 开发导航
 
-## 移植说明（v1.x BepInEx → v2.0 原生 mod）
-
-- 游戏从 Demo（IL2CPP）换成正式版（Mono），`Mods/` 原生加载器取代了 BepInEx 6 注入。
-- 入口从 `BasePlugin` 换成 `IMod`（Init/OnEnable/OnDisable），HUD 用普通 `MonoBehaviour`。
-- Harmony 补丁由游戏加载器自动应用（类上加 `[HarmonyPatch]` 即可），Harmony 用游戏自带的
-  `Managed/0Harmony.dll`。
-- 旧版为绕过 IL2CPP 的反射工具类已删除：正式版 API 全部是 public 的 C# 类型，直接引用即可
-  （`StoreClient`、`EmporiumEntry.backInvinvElement` 等，签名以反编译为准）。
-
-官方 modding 文档：<https://github.com/dragonpan2/probably-stolen-modding>（含中文版 ModdingGuide）。
+- [系统设计与已知边界](docs/design.md)：模块职责、运行时序、算法与游戏适配约束。
+- [维护与验证](docs/maintenance.md)：修改入口、游戏升级、回归检查和发布步骤。
+- [创意工坊发布](docs/workshop.md)：SteamCMD 配置、隐藏测试及后续更新。
+- [诊断工具](tools/README.md)：查看游戏类型签名与 IL。
+- [官方 modding 指南](https://github.com/dragonpan2/probably-stolen-modding)：原生加载器和 Harmony 约定；游戏签名以本机 `Assembly-CSharp.dll` 为准。

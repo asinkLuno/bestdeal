@@ -34,6 +34,7 @@ public static class ClientDemand
         {
             c.identifier ?? "",
             GetBudgetSafe(c).ToString(),
+            c.useClientBudget ? "B" : "-",
             c.isRequireVariety ? "V" : "-",
             c.acceptRetailMarkup ? "R" : "-",
             c.isOfferWholesale ? "W" : "-",
@@ -49,24 +50,25 @@ public static class ClientDemand
         return string.Join("|", parts);
     }
 
-    static long GetBudgetSafe(StoreClient c)
+    internal static long GetBudgetSafe(StoreClient c)
     {
         try { return c.GetBudget(); } catch { return 0; }
     }
 
-    /// <summary>物品 key → 中文类型名：type_household_good → 日用品（Mechanic 表）。查不到就用原值。</summary>
+    /// <summary>类别标签优先查 Mechanic 表；内部筛选标签不一定有翻译，需提供默认值。</summary>
     internal static string LocalizeTag(string key)
     {
         if (string.IsNullOrEmpty(key)) return key ?? "";
         var loc = "type_" + key.ToLowerInvariant();
+        var fallback = key == "LOTTERY_IS_WINNING_TAG" ? "中奖彩票" : key;
         try
         {
-            var s = LocHelper.GetLocalizedMechanic(loc);
-            // 本地化失败时游戏返回 key 本身或空串
+            // 普通 GetLocalizedMechanic 缺键时会返回整句 translation error，而非 key。
+            var s = LocHelper.GetLocalizedMechanicOrDefault(loc, fallback);
             if (!string.IsNullOrEmpty(s) && s != loc) return s;
         }
         catch { }
-        return key;
+        return fallback;
     }
 
     /// <summary>物品 id → 中文名：item_scrap_metal_name → 废金属（Item 表）。查不到就用原值。</summary>
@@ -76,7 +78,7 @@ public static class ClientDemand
         var loc = "item_" + id + "_name";
         try
         {
-            var s = LocHelper.GetLocalizedItem(loc);
+            var s = LocHelper.GetLocalizedOrDefault("Item", loc, id);
             if (!string.IsNullOrEmpty(s) && s != loc) return s;
         }
         catch { }

@@ -21,7 +21,7 @@ public static class Appraisal
     const string TagItem = "APPRAISAL_ITEM";
     const string TagInput = "APPRAISAL_DEFAULT_VALUE";
 
-    /// <summary>每帧刷新（Hud.Update 驱动）。只在估价面板可见时给出提示。</summary>
+    /// <summary>每帧刷新：放大镜检查时显示实际状态与赝品依据，估价面板额外显示价值。</summary>
     internal static void Tick()
     {
         Title = null;
@@ -30,28 +30,33 @@ public static class Appraisal
         {
             var insp = InspectionUIManager.Instance;
             if (insp == null) return;
+            if (insp.panel == null || !insp.panel.activeInHierarchy) return;
+            var item = insp.currentInspectingItem;
+            if (item == null) return;
+            string name = string.IsNullOrEmpty(item.name) ? "?" : item.name;
+            if (insp.magnifyingGlass != null && insp.magnifyingGlass.activeInHierarchy)
+                Lines.AddRange(Authenticity.InspectionLines(item));
+            if (Lines.Count > 0) Title = $"鉴定 — {name}";
+
             var panel = insp.appraisalPanel;
             if (panel == null || !panel.activeInHierarchy) return;
-            var item = insp.currentInspectingItem;
-            if (item == null || !item.IsTag(TagItem)) return;
+            if (!item.IsTag(TagItem)) return;
 
             int correct = 0;
             try { correct = AppraisalHelper.GetCorrectBaseValue(item); } catch { }
             if (correct <= 0) return;
 
-            string name;
-            try { name = string.IsNullOrEmpty(item.name) ? "?" : item.name; } catch { name = "?"; }
             Title = $"鉴定 — {name}";
-            Lines.Add($"真实价值：{correct}　照抄 = 完美");
+            Lines.Add($"真值：{correct}");
 
             int input = 0;
             try { input = item.GetTagReadonly(TagInput)?.GetInt() ?? 0; } catch { }
             if (input <= 0) return;                       // 没填过价（标签缺失/还没解析出数字）
             if (input == correct)
-                Lines.Add("当前输入：已照抄 ✓");
+                Lines.Add($"估价：{input} · {QualityName(GradeOf(correct, input))} ✓");
             else
-                Lines.Add($"当前输入：{input} → {QualityName(GradeOf(correct, input))}" +
-                          $"（{(input < correct ? "偏低" : "偏高")}，改成 {correct} 拿完美）");
+                Lines.Add($"估价：{input} · {QualityName(GradeOf(correct, input))}" +
+                          $"（{(input < correct ? "偏低" : "偏高")}）");
         }
         catch { }   // 检查台字段在场景切换瞬间可能失效，提示失败就当没有
     }

@@ -1,0 +1,12 @@
+"workshopitem"
+{
+    "appid"            "4348910"
+    "publishedfileid"  "0"
+    "contentfolder"    "/run/media/deck/SR256/steamapps/common/Probably Stolen/Mods/BestDeal"
+    // 准备好小于 1 MB 的封面后，取消下一行的注释并修改路径。
+    // "previewfile"   "/absolute/path/to/preview.png"
+    "visibility"       "2"
+    "title"            "BestDeal 最佳组合报价"
+    "description"      "顾客到柜台后推荐符合需求与预算的售卖组合，显示价格、库存位置、柜台就位标记和赝品提醒。另提供检查台鉴定估价提示，以及开店前新闻行情与橱窗建议。固定提示为中文。订阅后请在游戏主菜单的模组菜单启用并重启。"
+    "changenote"       "首次发布 v2.6.0"
+}

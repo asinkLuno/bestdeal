@@ -1,5 +1,4 @@
 using System;
-using HarmonyLib;
 using UnityEngine;
 
 namespace BestDeal;
@@ -54,7 +53,7 @@ public static class ClientSession
             if (_marketPanelShown)
             {
                 _marketPanelShown = false;
-                if (CurrentClient == null) Result.Set("BestDeal", new[] { "暂无顾客" });
+                if (CurrentClient == null) HudContent.Set("BestDeal", new[] { "暂无顾客" });
             }
 
             PollRequirement();
@@ -105,17 +104,4 @@ public static class ClientSession
             BestDealMod.Log.Error($"[{what}] 失败：{e}");
         }
     }
-}
-
-// Harmony 补丁由游戏模组加载器自动应用（扫描 [HarmonyPatch] 类），不要自己 PatchAll
-[HarmonyPatch(typeof(StoreClient), nameof(StoreClient.StartMainDialogue))]
-public static class StoreClient_StartMainDialogue_Patch
-{
-    static void Postfix(StoreClient __instance) => ClientSession.OnClientArrived(__instance);
-}
-
-[HarmonyPatch(typeof(StoreClient), nameof(StoreClient.CompleteBusiness))]
-public static class StoreClient_CompleteBusiness_Patch
-{
-    static void Postfix(StoreClient __instance) => ClientSession.OnBusinessDone(__instance);
 }

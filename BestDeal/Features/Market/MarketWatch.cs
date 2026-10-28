@@ -31,12 +31,11 @@ public static class MarketWatch
         (new[] { "WEAPON", "MELEE_WEAPON", "FIREARM", "MODDABLE", "GUN_MOD", "AMMUNITION", "MUNITION", "ARMOR" }, "firearm"),
     };
 
-    /// <summary>现在是否该显示行情面板：还没开店（MORNING 准备阶段等）且没有正在接待的顾客。</summary>
+    /// <summary>店铺是否处于非营业状态；是否正在接待顾客由 ClientSession 判断。</summary>
     public static bool WantsPanel()
     {
         try
         {
-            if (ClientSession.CurrentClient != null) return false;
             if (!PlayerStore.HasInstance) return false;
             return PlayerStore.Instance.storeState != PlayerStore.StoreState.OPEN;
         }
@@ -48,7 +47,7 @@ public static class MarketWatch
     {
         if (Time.unscaledTime < _nextCheck) return;
         _nextCheck = Time.unscaledTime + RefreshInterval;
-        Result.Set("BestDeal — 今日行情", BuildLines());
+        HudContent.Set("BestDeal — 今日行情", BuildLines());
     }
 
     static List<string> BuildLines()
@@ -71,7 +70,7 @@ public static class MarketWatch
         }
         if (deltas.Count == 0)
         {
-            lines.Add("今天没有涨跌价的新闻");
+            lines.Add("今日无涨跌");
             return lines;
         }
 
@@ -83,7 +82,7 @@ public static class MarketWatch
             if (kv.Value == 0) continue;
             any = true;
             string pct = kv.Value > 0 ? $"+{kv.Value}%" : $"{kv.Value}%";
-            lines.Add($"{(kv.Value > 0 ? "↑ 涨价" : "↓ 降价")}：{ClientDemand.LocalizeTag(kv.Key)} {pct}");
+            lines.Add($"{(kv.Value > 0 ? "↑" : "↓")} {ClientDemand.LocalizeTag(kv.Key)} {pct}");
             if (kv.Value > 0)
             {
                 var inStock = AffectedInStock(stock, kv.Key);
@@ -96,23 +95,23 @@ public static class MarketWatch
                     string top = TopStockType(stock);
                     if (top == null || top == suggestedTop)
                     {
-                        lines.Add("   → 库存里没有这类货");
+                        lines.Add("   → 无货");
                     }
                     else
                     {
                         suggestedTop = top;
                         var names = AffectedInStock(stock, top, 2);
-                        lines.Add($"   → 库存里没有这类货；可改摆库存最多的：{ClientDemand.LocalizeTag(top)}（{string.Join("、", names)}）");
+                        lines.Add($"   → 无货；可摆：{ClientDemand.LocalizeTag(top)}（{string.Join("、", names)}）");
                     }
                 }
             }
             else
             {
                 string sign = SignFor(kv.Key);
-                lines.Add(sign != null ? $"   → 橱窗挂收购牌：{sign}" : "   →（没有对应收购牌）");
+                lines.Add(sign != null ? $"   → 挂收购牌：{sign}" : "   →无对应收购牌");
             }
         }
-        if (!any) lines.Add("今天没有涨跌价的新闻");
+        if (!any) lines.Add("今日无涨跌");
         return lines;
     }
 

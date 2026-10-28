@@ -9,3 +9,6 @@ obj/
 # 编辑器
 .vs/
 .idea/
+
+# SteamCMD 会写回发布物品 ID，保留本机配置，不覆盖示例
+workshop/*.vdf
