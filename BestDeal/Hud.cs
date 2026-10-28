@@ -30,22 +30,31 @@ public class Hud : MonoBehaviour
     private void Update()
     {
         ClientSession.Tick();
+        Appraisal.Tick();     // 鉴定估价提示：只在检查台估价面板可见时有内容
     }
 
     private void OnGUI()
     {
-        var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走报价器
-        // 主菜单不画（占位提示只在店内显示）；探测进行中则任何场景都画
-        if (EmporiumEntry.Instance == null && status == null) return;
-        int total = Result.Lines.Count + (status == null ? 0 : 1);
-        if (total == 0) return;
+        bool showAppraisal = Appraisal.Title != null && Appraisal.Lines.Count > 0;
+        bool showMain = EmporiumEntry.Instance != null && Result.Lines.Count > 0;
+        // 主菜单不画（占位提示只在店内显示）；鉴定提示独立成框
+        if (!showMain && !showAppraisal) return;
         float width = Mathf.Min(560f, Screen.width - 32f);
-        var rect = new Rect(16, 16, width, 64 + total * 22);
-        GUI.Box(rect, Result.Title);
-        int i = 0;
-        for (; i < Result.Lines.Count; i++)
-            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), Result.Lines[i]);
-        if (status != null)
-            GUI.Label(new Rect(30, 46 + i * 22, rect.width - 28, 22), status);
+        float y = 16;
+        if (showMain)
+        {
+            var rect = new Rect(16, y, width, 64 + Result.Lines.Count * 22);
+            GUI.Box(rect, Result.Title);
+            for (int i = 0; i < Result.Lines.Count; i++)
+                GUI.Label(new Rect(30, y + 30 + i * 22, rect.width - 28, 22), Result.Lines[i]);
+            y += rect.height + 8;
+        }
+        if (showAppraisal)
+        {
+            var rect = new Rect(16, y, width, 64 + Appraisal.Lines.Count * 22);
+            GUI.Box(rect, Appraisal.Title);
+            for (int i = 0; i < Appraisal.Lines.Count; i++)
+                GUI.Label(new Rect(30, y + 30 + i * 22, rect.width - 28, 22), Appraisal.Lines[i]);
+        }
     }
 }

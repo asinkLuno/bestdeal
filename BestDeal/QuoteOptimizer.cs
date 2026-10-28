@@ -7,19 +7,17 @@ namespace BestDeal;
 /// <summary>
 /// 报价组合（只读，不改库存）：扫描各售卖区收集这位顾客会买的候选，
 /// 按"分组背包"算出让售出总额最大的组合，生成 HUD 文案。
-/// 价格只认 PriceProbe 探到的游戏实算价；预算来自顾客自身。
+/// 价格用 PriceProbe 内存模拟读出的游戏实算价（与真实摆上柜台一致）；预算来自顾客自身。
 /// </summary>
 public static class QuoteOptimizer
 {
-    private static int _unpriced; // 没探到游戏真价、未参与推荐的候选数
-
     class Cand
     {
         public GameItem Item;
         public string Name;
         public string GroupKey; // 同类型标识（identifier；空则用名字）
         public long Count;
-        public long Price;   // 游戏自己算出来的最终成交价（摆上柜台探测得到）
+        public long Price;   // 游戏自己算出来的最终成交价（模拟摆上柜台读得）
         public bool OnCounter;  // 已经摆在后柜台上（玩家不用再动）
     }
 
@@ -33,16 +31,10 @@ public static class QuoteOptimizer
 
         var name = string.IsNullOrEmpty(c.displayName) ? "?" : c.displayName;
         bool requireVariety = c.isRequireVariety;
-        var cands = Collect(c, requireVariety, needPrice: true);
+        var cands = Collect(c, requireVariety);
         if (cands.Count == 0)
         {
-            // 一样都没定价：可能只是还没探测，别急着说"他不买"；探测中进度行每帧都画着，不重复说
-            string note = PriceProbe.Running ? null
-                : _unpriced > 0 ? $"候选 {_unpriced} 件未探到价"
-                : "他不会买你店里的任何东西";
-            var idle = new List<string> { HeadLine(c) };
-            if (note != null) idle.Add(note);
-            Result.Set($"BestDeal — {name}", idle);
+            Result.Set($"BestDeal — {name}", new[] { HeadLine(c), "他不会买你店里的任何东西" });
             return;
         }
 
@@ -182,34 +174,14 @@ public static class QuoteOptimizer
         try { return c.GetBudget(); } catch { return 0; }
     }
 
-    /// <summary>候选物品（给价格探测排队用：与 Collect 同一套筛选，但**不要求已经探到价**）。</summary>
-    internal static List<GameItem> CollectCandidates(StoreClient c, bool requireVariety)
-    {
-        // 探测按"游戏估值从高到低"排队：超过上限时先探值钱的，尾部的低价值物品不参与推荐
-        return Collect(c, requireVariety, needPrice: false)
-            .OrderByDescending(x => ValueOf(x.Item))
-            .Select(x => x.Item)
-            .ToList();
-    }
-
-    static long ValueOf(GameItem gi)
-    {
-        long v = 0;
-        try { v = gi.GetNegociatedValue(); } catch { }
-        if (v <= 0) v = gi.unitValue;
-        return v;
-    }
-
     /// <summary>
     /// 扫描各售卖/仓储区收集物品；只扫玩家能拿去卖的存储区。
-    /// needPrice=true（HUD 推荐）只保留已探到游戏价的物品；needPrice=false（给探测排队）不做价格过滤——
-    /// 否则就成了"要先探到价，才肯去探价"的死结（v1.4.0 的实际 bug：探测一步都没跑过）。
+    /// 每件候选当场用 PriceProbe 模拟读出游戏实价（同步、不动库存），读不出价（失败/零价值）的不推荐。
     /// </summary>
-    static List<Cand> Collect(StoreClient c, bool requireVariety, bool needPrice)
+    static List<Cand> Collect(StoreClient c, bool requireVariety)
     {
         var result = new List<Cand>();
         var seen = new HashSet<GameItem>();
-        _unpriced = 0;
 
         foreach (var (inv, zone) in ShopInventories.Enumerate())
         {
@@ -234,13 +206,9 @@ public static class QuoteOptimizer
                 long cnt = gi.unitCount;
                 if (cnt <= 0) cnt = 1;
 
-                // 价格只认"摆上柜台探测"到的游戏真价；没探到（超出探测上限等）就不推荐它
-                long price = PriceProbe.PriceFor(gi);
-                if (price <= 0 && needPrice)
-                {
-                    _unpriced++;
-                    continue;
-                }
+                // 价格 = 游戏自己算的最终成交价（模拟摆上柜台读得）
+                long price = PriceProbe.ReadPrice(c, gi);
+                if (price <= 0) continue;
 
                 var gk = gi.identifier;
                 if (string.IsNullOrEmpty(gk)) gk = gi.name ?? "?";
@@ -251,7 +219,7 @@ public static class QuoteOptimizer
                     GroupKey = gk,
                     Count = cnt,
                     Price = price,
-                    OnCounter = ReferenceEquals(inv, ShopInventories.BackCounter),
+                    OnCounter = ShopInventories.IsCounter(inv),
                 });
             }
         }

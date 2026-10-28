@@ -55,7 +55,7 @@ public static class ClientDemand
     }
 
     /// <summary>物品 key → 中文类型名：type_household_good → 日用品（Mechanic 表）。查不到就用原值。</summary>
-    static string LocalizeTag(string key)
+    internal static string LocalizeTag(string key)
     {
         if (string.IsNullOrEmpty(key)) return key ?? "";
         var loc = "type_" + key.ToLowerInvariant();
