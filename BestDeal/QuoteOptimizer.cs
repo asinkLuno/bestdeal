@@ -136,9 +136,14 @@ public static class QuoteOptimizer
             $"，候选 {cands.Count} 件" + skippedNote,
         };
         foreach (var p in picked)
+        {
             lines.Add(p.OnCounter
                 ? $"✔ 已在柜台：{p.Name} ×{p.Count} = {p.Price}"
                 : $"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
+            // 赝品警告：理由是游戏自己的本地化文本（顾客识破时说的原话），mod 不硬编码
+            foreach (var w in Authenticity.FakeWarnings(p.Item))
+                lines.Add($"   {w}");
+        }
         lines.Add(onCounter > 0
             ? $"共 {picked.Count} 件，其中 {onCounter} 件已在柜台"
             : $"共 {picked.Count} 件");

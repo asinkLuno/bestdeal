@@ -8,8 +8,8 @@ namespace BestDeal;
 /// 游戏原生 mod（IMod + manifest.xml，Harmony 补丁由游戏加载器自动应用，无需 PatchAll）。
 ///
 /// 模块划分（依赖自上而下，无环）：
-///   入口 BestDealMod → 展示 Hud → 编排 ClientSession → 功能 PriceProbe / ClientDemand / QuoteOptimizer
-///   → 基础 ShopInventories → 游戏类型。
+///   入口 BestDealMod → 展示 Hud → 编排 ClientSession → 功能 PriceProbe / ClientDemand / QuoteOptimizer /
+///   Authenticity → 基础 ShopInventories → 游戏类型。
 ///
 /// 价格一律用游戏自己算的：物品**摆上柜台招待这位顾客**时游戏才会算出最终成交价（实测：背包里读 55，
 /// 摆上柜台变 64/37），所以由 PriceProbe 把候选物品逐件快速摆上柜台读走价格再收回，
@@ -24,7 +24,7 @@ public class BestDealMod : IMod
     public void Init(ModManifest manifest)
     {
         Log = new ModLog(manifest);
-        Log.Log("BestDeal v2.2.0 已加载");
+        Log.Log("BestDeal v2.3.0 已加载");
     }
 
     public void OnEnable()
