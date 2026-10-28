@@ -32,7 +32,7 @@ dotnet build BestDeal -c Release -p:Deploy=false   # 只构建不部署
 1. 启动游戏，主菜单打开 **模组** 菜单，选中 BestDeal 点 **启用**，重启游戏生效。
 2. 本地反复改代码迭代时，在模组详情面板打开 **开发者模式**，之后每次重新编译重启即可直接加载，
    不用重新审批。
-3. 按 **F8** 打开调试控制台，能看到 `[BestDeal 最佳组合报价]: BestDeal v2.0.0 已加载`。
+3. 按 **F8** 打开调试控制台，能看到 `[BestDeal 最佳组合报价]: BestDeal v2.1.0 已加载`。
 4. 有疑问可在 F8 控制台跑 `mod-scan best_deal` 自查能力扫描结果（本 mod 清单里
    `<Capabilities />` 为空，目标是零能力）。
 

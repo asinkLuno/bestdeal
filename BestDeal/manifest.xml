@@ -3,7 +3,7 @@
   <ID>best_deal</ID>
   <Name>BestDeal 最佳组合报价</Name>
   <Author>guozr</Author>
-  <ModVersion>2.0.0</ModVersion>
+  <ModVersion>2.1.0</ModVersion>
   <Description>顾客到柜台开始对话后，自动计算这位顾客会买哪些东西、怎么卖最划算，屏幕左上角悬浮窗显示推荐清单（价格为游戏实算成交价，物品会短暂摆上柜台读价后自动放回）。</Description>
   <GameVersions>
     <Version>0.46D</Version>
