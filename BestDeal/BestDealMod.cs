@@ -28,6 +28,8 @@ public class BestDealMod : IMod
     public void OnEnable()
     {
         EnsureHud();
+        // 开局先给一行占位，进店就能看到 HUD、确认 mod 活着（顾客上门后被推荐清单替换）
+        Result.Set("BestDeal", new[] { "已加载：顾客到柜台开始对话后自动显示推荐清单" });
     }
 
     public void OnDisable() { }
@@ -80,6 +82,8 @@ public class Hud : MonoBehaviour
     private void OnGUI()
     {
         var status = PriceProbe.Status;                       // 探测进度：每帧直接读，不走 Optimizer
+        // 主菜单不画（占位提示只在店内显示）；探测进行中则任何场景都画
+        if (EmporiumEntry.Instance == null && status == null) return;
         int total = Result.Lines.Count + (status == null ? 0 : 1);
         if (total == 0) return;
         float width = Mathf.Min(560f, Screen.width - 32f);
