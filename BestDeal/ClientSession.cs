@@ -14,6 +14,7 @@ public static class ClientSession
 {
     internal static StoreClient CurrentClient;
     private static string _lastReqSig;     // 上次渲染时的需求指纹
+    private static string _lastCounterSig; // 上次渲染时的柜台内容指纹（玩家摆上/拿走物品会变）
     private static float _nextReqCheck;
     private static StoreClient _probedClient;   // 已经探过价的顾客，离开时清掉
     private static float _nextProbeCheck;
@@ -63,16 +64,22 @@ public static class ClientSession
     /// 顾客需求是「到店之后」才填的（实测：StartMainDialogue 那一刻 clientBuyingTagList 为空、
     /// isRequireVariety=False，几秒后才有 HOUSEHOLD_GOOD 且 isRequireVariety=True），
     /// 所以按 0.5 秒轮询需求指纹，一变就重算，别让 HUD 停在「无限制」。
+    /// 柜台内容指纹一并轮询：玩家把推荐的东西摆上/拿下柜台时，"✔ 已在柜台"标记要即时跟上。
+    /// 探测进行中柜台本来就在被探测动，跳过以免自己触发自己。
     /// </summary>
     static void PollRequirement()
     {
         var c = CurrentClient;
-        if (c == null) { _lastReqSig = null; return; }
+        if (c == null) { _lastReqSig = null; _lastCounterSig = null; return; }
         if (Time.unscaledTime < _nextReqCheck) return;
         _nextReqCheck = Time.unscaledTime + 0.5f;
 
         var sig = SafeSig(c);
-        if (sig == _lastReqSig) return;
+        var counterSig = PriceProbe.Running ? null : ShopInventories.BackCounterSignature();
+        bool counterChanged = counterSig != null && _lastCounterSig != null && counterSig != _lastCounterSig;
+        if (counterSig != null) _lastCounterSig = counterSig;
+
+        if (sig == _lastReqSig && !counterChanged) return;
         _lastReqSig = sig;
         QuoteOptimizer.Run(c);
     }

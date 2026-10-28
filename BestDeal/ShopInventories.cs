@@ -34,4 +34,21 @@ public static class ShopInventories
             catch { return null; }
         }
     }
+
+    /// <summary>
+    /// 后柜台内容的指纹：玩家摆上/拿走物品就变化。编排层按 0.5 秒轮询它，
+    /// 一变就重算报价，让"已在柜台 ✔"标记即时跟上玩家的动作。探测进行中不要调（探测自己在动柜台）。
+    /// </summary>
+    public static string BackCounterSignature()
+    {
+        try
+        {
+            var items = BackCounter?.childItems;
+            if (items == null || items.Count == 0) return "0";
+            var parts = new List<string>(items.Count);
+            foreach (var gi in items) parts.Add(gi == null ? "-" : gi.GetHashCode().ToString());
+            return items.Count + ":" + string.Join(",", parts);
+        }
+        catch { return null; }
+    }
 }

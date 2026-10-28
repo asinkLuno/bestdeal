@@ -20,6 +20,7 @@ public static class QuoteOptimizer
         public string GroupKey; // 同类型标识（identifier；空则用名字）
         public long Count;
         public long Price;   // 游戏自己算出来的最终成交价（摆上柜台探测得到）
+        public bool OnCounter;  // 已经摆在后柜台上（玩家不用再动）
     }
 
     public static void Run(StoreClient c)
@@ -120,7 +121,12 @@ public static class QuoteOptimizer
         }
 
         long total = 0;
-        foreach (var p in picked) total += p.Price;
+        int onCounter = 0;
+        foreach (var p in picked)
+        {
+            total += p.Price;
+            if (p.OnCounter) onCounter++;
+        }
 
         var lines = new List<string>
         {
@@ -130,8 +136,12 @@ public static class QuoteOptimizer
             $"，候选 {cands.Count} 件" + skippedNote,
         };
         foreach (var p in picked)
-            lines.Add($"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
-        lines.Add($"共 {picked.Count} 件");
+            lines.Add(p.OnCounter
+                ? $"✔ 已在柜台：{p.Name} ×{p.Count} = {p.Price}"
+                : $"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
+        lines.Add(onCounter > 0
+            ? $"共 {picked.Count} 件，其中 {onCounter} 件已在柜台"
+            : $"共 {picked.Count} 件");
 
         Result.Set($"BestDeal — {name}", lines);
     }
@@ -210,6 +220,7 @@ public static class QuoteOptimizer
                     GroupKey = gk,
                     Count = cnt,
                     Price = price,
+                    OnCounter = ReferenceEquals(inv, ShopInventories.BackCounter),
                 });
             }
         }
