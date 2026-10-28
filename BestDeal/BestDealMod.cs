@@ -1,40 +1,36 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using BepInEx;
-using BepInEx.Logging;
-using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Runtime.Injection;
-using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 
 namespace BestDeal;
 
 /// <summary>
 /// BestDeal — 顾客上门时按类别+预算计算最佳售卖组合，HUD 显示推荐清单。
+/// 游戏原生 mod（IMod + manifest.xml，Harmony 补丁由游戏加载器自动应用，无需 PatchAll）。
 /// 价格一律用游戏自己算的：物品**摆上柜台招待这位顾客**时游戏才会算出最终成交价（实测：背包里读 55，
 /// 摆上柜台变 64/37），所以 mod 会把候选物品逐件快速摆上柜台读走价格再收回（见 PriceProbe），
 /// 而不是自己按加价公式估算。
 /// 需求同样读游戏自己的字段：clientBuyingTagList / clientBuyingIdList（到店几秒后才填，轮询刷新）、
-/// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件，分组背包）。
+/// isRequireVariety + IsItemInVarietyList（要求不重复的顾客每类最多推荐 1 件）。
 /// </summary>
-[BepInPlugin("guozr.skdp.bestdeal", "BestDeal", "1.4.2")]
-public class Plugin : BasePlugin
+public class BestDealMod : IMod
 {
-    internal static new ManualLogSource Log;
-    private Harmony _harmony;
+    internal static ModLog Log;
 
-    public override void Load()
+    public void Init(ModManifest manifest)
     {
-        Log = base.Log;
-        _harmony = new Harmony("guozr.skdp.bestdeal");
-        _harmony.PatchAll(typeof(Patches));
-
-        ClassInjector.RegisterTypeInIl2Cpp<Hud>();
-        Log.LogInfo("BestDeal v1.4.2 已加载");
+        Log = new ModLog(manifest);
+        Log.Log("BestDeal v2.0.0 已加载");
     }
+
+    public void OnEnable()
+    {
+        EnsureHud();
+    }
+
+    public void OnDisable() { }
 
     internal static void EnsureHud()
     {
@@ -43,11 +39,11 @@ public class Plugin : BasePlugin
         {
             var go = new GameObject("BestDealHud");
             UnityEngine.Object.DontDestroyOnLoad(go);
-            go.AddComponent(Il2CppInterop.Runtime.Il2CppType.Of<Hud>()).TryCast<Hud>();
+            go.AddComponent<Hud>();
         }
         catch (Exception e)
         {
-            Log.LogWarning($"HUD 创建失败：{e.Message}");
+            Log.Warning($"HUD 创建失败：{e.Message}");
         }
     }
 }
@@ -68,7 +64,6 @@ public static class Result
 /// <summary>游戏内悬浮窗（只负责画）。</summary>
 public class Hud : MonoBehaviour
 {
-    public Hud(IntPtr h) : base(h) { }
     internal static Hud Instance;
 
     private void Awake()
@@ -76,7 +71,7 @@ public class Hud : MonoBehaviour
         Instance = this;
     }
 
-    // 自己的 Update 一定会被 Unity 调到：轮询不能只挂在游戏自己的 StoreClientCounter.Update 上
+    // 轮询唯一的驱动：这个 GameObject 是 DontDestroyOnLoad 的，主菜单/店内/读盘每帧都会跑
     private void Update()
     {
         Patches.Poll();
@@ -101,54 +96,36 @@ public class Hud : MonoBehaviour
 public static class Patches
 {
     internal static StoreClient CurrentClient;
-    private static int _lastPollFrame;
     private static string _lastReqSig;     // 上次渲染时的需求指纹
     private static float _nextReqCheck;
 
     // 顾客开始对话 = 顾客已到柜台，自动计算一次
-    [HarmonyPatch(typeof(StoreClient), "StartMainDialogue")]
-    [HarmonyPostfix]
-    static void OnClientArrived(StoreClient __instance)
+    internal static void OnClientArrived(StoreClient __instance)
     {
+        var prev = CurrentClient;
+        if (prev != null && !ReferenceEquals(prev, __instance)) PriceProbe.Stop(prev);
         CurrentClient = __instance;
         _lastReqSig = null;
         _nextReqCheck = 0f;
         _arrivedAt = Time.unscaledTime;
-        _probedPtr = 0;
-        PriceProbe.Stop(CurrentClient);
-        Plugin.EnsureHud();
+        _probedClient = null;
         TryRun("自动计算", Optimizer.Run);
         _lastReqSig = SafeSig(__instance);
     }
 
-    // 交易结束清掉当前顾客（注意：interop 代理对象引用永不相同，必须比指针）
-    [HarmonyPatch(typeof(StoreClient), "CompleteBusiness")]
-    [HarmonyPostfix]
-    static void OnBusinessDone(StoreClient __instance)
+    // 交易结束清掉当前顾客
+    internal static void OnBusinessDone(StoreClient __instance)
     {
-        try
-        {
-            var cur = CurrentClient;
-            if (cur == null) return;
-            if ((long)((Il2CppObjectBase)cur).Pointer == (long)((Il2CppObjectBase)__instance).Pointer)
-            {
-                PriceProbe.Stop(CurrentClient);
-                CurrentClient = null;
-                _lastReqSig = null;
-                _probedPtr = 0;
-            }
-        }
-        catch { }
+        if (!ReferenceEquals(CurrentClient, __instance)) return;
+        PriceProbe.Stop(CurrentClient);
+        CurrentClient = null;
+        _lastReqSig = null;
+        _probedClient = null;
     }
 
-    // 每帧轮询：挂游戏自己的 Update + HUD 自己的 Update（两个都在时靠同帧去重只跑一次）
-    [HarmonyPatch(typeof(StoreClientCounter), "Update")]
-    [HarmonyPostfix]
+    // 每帧轮询（Hud.Update 驱动）
     internal static void Poll()
     {
-        int frame = Time.frameCount;
-        if (frame == _lastPollFrame) return;
-        _lastPollFrame = frame;
         try
         {
             if (PriceProbe.Running) PriceProbe.Step(CurrentClient);   // 手里的东西先放回原位（在哪个场景都要放）
@@ -158,7 +135,7 @@ public static class Patches
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"Poll: {e}");
+            BestDealMod.Log.Error($"Poll: {e}");
         }
     }
 
@@ -184,24 +161,23 @@ public static class Patches
     static void MaybeStartProbe()
     {
         var c = CurrentClient;
-        if (c == null) { _probedPtr = 0; return; }
+        if (c == null) { _probedClient = null; return; }
         if (PriceProbe.Running) return;
-        if ((long)((Il2CppObjectBase)c).Pointer == _probedPtr) return;   // 这位顾客已经探过一轮
+        if (ReferenceEquals(c, _probedClient)) return;   // 这位顾客已经探过一轮
         if (Time.unscaledTime < _nextProbeCheck) return;
         _nextProbeCheck = Time.unscaledTime + 1f;
 
-        bool hasReq;
-        try { hasReq = Ref.Items(Ref.Get(c, "clientBuyingTagList")).Any() || Ref.Items(Ref.Get(c, "clientBuyingIdList")).Any(); }
-        catch { hasReq = false; }
+        bool hasReq = (c.clientBuyingTagList != null && c.clientBuyingTagList.Count > 0)
+                   || (c.clientBuyingIdList != null && c.clientBuyingIdList.Count > 0);
         if (!hasReq && Time.unscaledTime - _arrivedAt < 4f) return;   // 需求还是空的（可能还没填）就再等几秒
 
-        var cands = Optimizer.CollectCandidates(c, Ref.GetBool(c, "isRequireVariety"));
+        var cands = Optimizer.CollectCandidates(c, c.isRequireVariety);
         if (cands.Count == 0) return;
         // 只有真的排上队才记"这位顾客探过"——找不到柜台时不记，留着重试
-        if (PriceProbe.Start(c, cands)) _probedPtr = (long)((Il2CppObjectBase)c).Pointer;
+        if (PriceProbe.Start(c, cands)) _probedClient = c;
     }
 
-    static long _probedPtr;   // 已经探过价的顾客（il2cpp 指针），离开时清零
+    static StoreClient _probedClient;   // 已经探过价的顾客，离开时清掉
     static float _nextProbeCheck;
     static float _arrivedAt;
 
@@ -219,19 +195,33 @@ public static class Patches
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[{what}] 失败：{e}");
+            BestDealMod.Log.Error($"[{what}] 失败：{e}");
         }
     }
+}
+
+// Harmony 补丁由游戏模组加载器自动应用（扫描 [HarmonyPatch] 类），不要自己 PatchAll
+[HarmonyPatch(typeof(StoreClient), nameof(StoreClient.StartMainDialogue))]
+public static class StoreClient_StartMainDialogue_Patch
+{
+    static void Postfix(StoreClient __instance) => Patches.OnClientArrived(__instance);
+}
+
+[HarmonyPatch(typeof(StoreClient), nameof(StoreClient.CompleteBusiness))]
+public static class StoreClient_CompleteBusiness_Patch
+{
+    static void Postfix(StoreClient __instance) => Patches.OnBusinessDone(__instance);
 }
 
 /// <summary>
 /// 价格探测：游戏只在"物品被摆给当前顾客看"的时候才算最终价（实测：背包里读 55，摆上柜台后变 64/37）。
 /// 所以这里把候选物品逐件放上柜台 → 读走游戏算好的价 → 立刻收回原库存（一件一件、每步校验）。
-/// 只借价格，不改归属：源库存取物品自己的 parentInventory，收回后校验指针，收回失败立即停手并告警。
+/// 只借价格，不改归属：源库存取物品自己的 parentInventory，收回后校验，收回失败立即停手并告警。
+/// 柜台用 EmporiumEntry.backInvinvElement——游戏自己的 MoveItemToBackCounter 就是往这里放。
 /// </summary>
 public static class PriceProbe
 {
-    private static readonly Dictionary<long, long> Prices = new();   // il2cpp 指针 → 游戏算的最终价
+    private static readonly Dictionary<GameItem, long> Prices = new();   // 物品 → 游戏算的最终价
     private static readonly List<GameItem> Queue = new();
     private static GameItem _cur;
     private static GameInventory _src, _dst;
@@ -255,7 +245,7 @@ public static class PriceProbe
     /// <summary>游戏给这件物品算出的最终价（没探测过返回 0）。</summary>
     public static long PriceFor(GameItem gi)
     {
-        try { return Prices.TryGetValue((long)((Il2CppObjectBase)gi).Pointer, out var v) ? v : 0; }
+        try { return Prices.TryGetValue(gi, out var v) ? v : 0; }
         catch { return 0; }
     }
 
@@ -265,7 +255,7 @@ public static class PriceProbe
         var dst = FindCounter();
         if (dst == null)
         {
-            Plugin.Log.LogWarning("价格探测：没找到后柜台（backInv），本轮跳过");
+            BestDealMod.Log.Warning("价格探测：没找到后柜台（backInvinvElement），本轮跳过");
             return false;
         }
         Prices.Clear();
@@ -287,7 +277,7 @@ public static class PriceProbe
         RestoreVariety(c);
     }
 
-    /// <summary>由 StoreClientCounter.Update 的轮询驱动：一步一件。</summary>
+    /// <summary>由轮询驱动：一步一件。</summary>
     public static void Step(StoreClient c)
     {
         if (Time.unscaledTime < _nextAt) return;
@@ -298,14 +288,14 @@ public static class PriceProbe
             if (Queue.Count == 0) return;
             var gi = Queue[0];
             Queue.RemoveAt(0);
-            try { _src = Ref.Get(gi, "parentInventory") as GameInventory; } catch { _src = null; }
+            try { _src = gi.parentInventory; } catch { _src = null; }
             if (_src == null) return;
             _cur = gi;
-            try { _src.Expel(gi); } catch (Exception e) { Plugin.Log.LogWarning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
+            try { _src.Expel(gi); } catch (Exception e) { BestDealMod.Log.Warning($"价格探测：取出 {NameOf(gi)} 失败：{e.Message}"); _cur = null; return; }
             try { _dst.UncheckedAccept(gi); }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"价格探测：上柜台失败，已放回：{e.Message}");
+                BestDealMod.Log.Warning($"价格探测：上柜台失败，已放回：{e.Message}");
                 try { _src.UncheckedAccept(gi); } catch { }
                 _cur = null;
                 return;
@@ -315,8 +305,8 @@ public static class PriceProbe
         }
 
         long price = 0;
-        try { price = Ref.ToLong(Ref.Call0(_cur, "GetNegociatedValue"), 0); } catch { }
-        if (price > 0) { try { Prices[(long)((Il2CppObjectBase)_cur).Pointer] = price; } catch { } }
+        try { price = _cur.GetNegociatedValue(); } catch { }
+        if (price > 0) { try { Prices[_cur] = price; } catch { } }
         if (_cur != null) ReturnCurrent();
         _nextAt = Time.unscaledTime + 0.1f;
         if (Queue.Count == 0)
@@ -334,48 +324,36 @@ public static class PriceProbe
         if (item == null) return;
         try
         {
-            var where = Ref.Get(item, "parentInventory") as GameInventory;
-            long wherePtr = Ptr(where), dstPtr = Ptr(_dst), srcPtr = Ptr(_src);
-            if (wherePtr == srcPtr) return;                       // 本来就在原位
-            if (_dst == null || wherePtr != dstPtr) return;        // 被顾客买走/挪走了：别去抢
+            var where = item.parentInventory;
+            if (where == null) return;
+            if (ReferenceEquals(where, _src)) return;             // 本来就在原位
+            if (_dst == null || !ReferenceEquals(where, _dst)) return;   // 被顾客买走/挪走了：别去抢
             where.Expel(item);
             if (_src != null) _src.UncheckedAccept(item);
-            var back = Ref.Get(item, "parentInventory") as GameInventory;
-            if (Ptr(back) != srcPtr)
-                Plugin.Log.LogWarning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
+            var back = item.parentInventory;
+            if (!ReferenceEquals(back, _src))
+                BestDealMod.Log.Warning($"价格探测：{NameOf(item)} 没能放回原处，快检查柜台！");
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
+            BestDealMod.Log.Warning($"价格探测：收回 {NameOf(item)} 出错：{e.Message}");
         }
     }
 
-    static long Ptr(object o) { try { return o == null ? 0 : (long)((Il2CppObjectBase)o).Pointer; } catch { return 0; } }
-
-    static string NameOf(GameItem gi) { try { return Ref.Get(gi, "name", "?")?.ToString(); } catch { return "?"; } }
+    static string NameOf(GameItem gi) { try { return gi.name ?? "?"; } catch { return "?"; } }
 
     /// <summary>柜台（后柜台）库存：顾客能看到的那一个。</summary>
     static GameInventory FindCounter()
     {
-        try
-        {
-            foreach (var (inv, _) in ShopInventories.Enumerate())
-            {
-                var id = Ref.Get(inv, "identifier", "")?.ToString() ?? "";
-                if (id.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0) return inv;
-            }
-        }
-        catch { }
-        return null;
+        try { return EmporiumEntry.Instance != null ? EmporiumEntry.Instance.backInvinvElement : null; }
+        catch { return null; }
     }
 
-    /// <summary>探测前的多样性记录（按字符串值比对：interop 代理对象每次都是新的，比引用不可靠）。</summary>
+    /// <summary>探测前的多样性记录。</summary>
     static List<string> SnapshotVariety(StoreClient c)
     {
-        var list = new List<string>();
-        try { foreach (var x in Ref.Items(Ref.Get(c, "varietyTrackingList"))) list.Add(x?.ToString()); }
-        catch { }
-        return list;
+        try { return c?.varietyTrackingList != null ? new List<string>(c.varietyTrackingList) : null; }
+        catch { return null; }
     }
 
     /// <summary>探测会让顾客"见过"这些物品，把新增的多样性记录删掉，免得影响"要求不重复"的判定。</summary>
@@ -384,17 +362,11 @@ public static class PriceProbe
         if (c == null || _varietyBefore == null) return;
         try
         {
-            var list = Ref.Get(c, "varietyTrackingList");
+            var list = c.varietyTrackingList;
             if (list != null)
             {
-                var now = new List<string>();
-                foreach (var x in Ref.Items(list)) now.Add(x?.ToString());
-                foreach (var x in now)
-                {
-                    if (_varietyBefore.Contains(x)) continue;      // 探测前就有的，保留
-                    var mi = list.GetType().GetMethod("Remove", new[] { typeof(string) });
-                    mi?.Invoke(list, new object[] { x });
-                }
+                foreach (var x in new List<string>(list))
+                    if (!_varietyBefore.Contains(x)) list.Remove(x);
             }
         }
         catch { }
@@ -408,8 +380,8 @@ public static class ClientInfo
     public static string TagsSummary(StoreClient c)
     {
         var parts = new List<string>();
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add(LocalizeTag(x?.ToString()));
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add(LocalizeId(x?.ToString()));
+        if (c.clientBuyingTagList != null) foreach (var x in c.clientBuyingTagList) parts.Add(LocalizeTag(x));
+        if (c.clientBuyingIdList != null) foreach (var x in c.clientBuyingIdList) parts.Add(LocalizeId(x));
         var s = string.Join("、", parts);
         return s.Length == 0 ? "无限制" : s;
     }
@@ -444,72 +416,6 @@ public static class ClientInfo
     }
 }
 
-/// <summary>反射小工具。</summary>
-public static class Ref
-{
-    public static object Get(object o, string prop, object def = null)
-    {
-        try
-        {
-            var p = o?.GetType().GetProperty(prop);
-            if (p != null) return p.GetValue(o);
-            var f = o?.GetType().GetField(prop);
-            if (f != null) return f.GetValue(o);
-        }
-        catch { }
-        return def;
-    }
-
-    /// <summary>调无参方法（拿不到返回 null）。</summary>
-    public static object Call0(object o, string name)
-    {
-        try
-        {
-            var m = o?.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance,
-                                           null, Type.EmptyTypes, null);
-            return m?.Invoke(o, null);
-        }
-        catch { return null; }
-    }
-
-    public static bool GetBool(object o, string prop, bool def = false)
-    {
-        try
-        {
-            var v = Get(o, prop, null);
-            return v == null ? def : Convert.ToBoolean(v.ToString());
-        }
-        catch { return def; }
-    }
-
-    public static long ToLong(object o, long def = 0)
-    {
-        try { return o == null ? def : Convert.ToInt64(o.ToString()); }
-        catch { return def; }
-    }
-
-    /// <summary>il2cpp List 或数组，通用枚举（Count/索引器反射）。</summary>
-    public static IEnumerable<object> Items(object list)
-    {
-        if (list == null) yield break;
-        var t = list.GetType();
-        var countProp = t.GetProperty("Count") ?? t.GetProperty("length") ?? t.GetProperty("Length");
-        if (countProp == null) yield break;
-        int n = Convert.ToInt32(countProp.GetValue(list));
-        var itemProp = t.GetProperty("Item");
-        for (int i = 0; i < n; i++)
-        {
-            if (itemProp != null)
-                yield return itemProp.GetValue(list, new object[] { i });
-            else if (list is System.Collections.IEnumerable en)
-            {
-                int j = 0;
-                foreach (var x in en) { if (j++ == i) { yield return x; break; } }
-            }
-        }
-    }
-}
-
 /// <summary>候选商品 + 分组背包优化（只读）。</summary>
 public static class Optimizer
 {
@@ -533,8 +439,8 @@ public static class Optimizer
             return;
         }
 
-        var name = Ref.Get(c, "displayName", "?")?.ToString();
-        bool requireVariety = Ref.GetBool(c, "isRequireVariety");
+        var name = string.IsNullOrEmpty(c.displayName) ? "?" : c.displayName;
+        bool requireVariety = c.isRequireVariety;
         var cands = Collect(c, requireVariety, needPrice: true);
         if (cands.Count == 0)
         {
@@ -545,13 +451,13 @@ public static class Optimizer
                                  : "他不会买你店里的任何东西");
             Result.Set($"BestDeal — {name}", new[]
             {
-                $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}",
+                $"顾客：{name}  预算：{GetBudgetSafe(c)}  类别：{ClientInfo.TagsSummary(c)}",
                 note,
             });
             return;
         }
 
-        long budget = Ref.ToLong(SafeGetBudget(c), 0);
+        long budget = GetBudgetSafe(c);
         if (budget <= 0) budget = long.MaxValue / 4;
 
         // 分组：要求不重复 → 同类最多 1 件；否则每件独立
@@ -607,7 +513,7 @@ public static class Optimizer
             }
         }
 
-        string head = $"顾客：{name}  预算：{SafeGetBudget(c)}  类别：{ClientInfo.TagsSummary(c)}" +
+        string head = $"顾客：{name}  预算：{GetBudgetSafe(c)}  类别：{ClientInfo.TagsSummary(c)}" +
                       (requireVariety ? "  [要求不重复]" : "");
         string skippedNote = _unpriced > 0 ? $"（另 {_unpriced} 件未探到价已跳过）" : "";
 
@@ -629,7 +535,7 @@ public static class Optimizer
         {
             head,
             $"可售出总额：{total}" +
-            (Ref.ToLong(SafeGetBudget(c), 0) > 0 ? $"（剩预算 {Math.Max(0, budget - total)}）" : "") +
+            (GetBudgetSafe(c) > 0 ? $"（剩预算 {Math.Max(0, budget - total)}）" : "") +
             $"，候选 {cands.Count} 件" + skippedNote,
         };
         foreach (var p in picked)
@@ -639,9 +545,9 @@ public static class Optimizer
         Result.Set($"BestDeal — {name}", lines);
     }
 
-    static object SafeGetBudget(StoreClient c)
+    static long GetBudgetSafe(StoreClient c)
     {
-        try { return c.GetBudget(); } catch { return Ref.Get(c, "clientBudget"); }
+        try { return c.GetBudget(); } catch { return 0; }
     }
 
     /// <summary>
@@ -651,19 +557,20 @@ public static class Optimizer
     {
         var parts = new List<string>
         {
-            Ref.Get(c, "identifier", "")?.ToString() ?? "",
-            Ref.ToLong(SafeGetBudget(c), 0).ToString(),
-            Ref.GetBool(c, "isRequireVariety") ? "V" : "-",
-            Ref.GetBool(c, "acceptRetailMarkup") ? "R" : "-",
-            Ref.GetBool(c, "isOfferWholesale") ? "W" : "-",
+            c.identifier ?? "",
+            GetBudgetSafe(c).ToString(),
+            c.isRequireVariety ? "V" : "-",
+            c.acceptRetailMarkup ? "R" : "-",
+            c.isOfferWholesale ? "W" : "-",
         };
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingTagList"))) parts.Add("t" + x);
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBuyingIdList"))) parts.Add("i" + x);
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBlackTagList"))) parts.Add("bt" + x);
-        foreach (var x in Ref.Items(Ref.Get(c, "clientBlackIdList"))) parts.Add("bi" + x);
+        if (c.clientBuyingTagList != null) foreach (var x in c.clientBuyingTagList) parts.Add("t" + x);
+        if (c.clientBuyingIdList != null) foreach (var x in c.clientBuyingIdList) parts.Add("i" + x);
+        if (c.clientBlackTagList != null) foreach (var x in c.clientBlackTagList) parts.Add("bt" + x);
+        if (c.clientBlackIdList != null) foreach (var x in c.clientBlackIdList) parts.Add("bi" + x);
         // 顾客的买方加成特性（可能是到店后才挂上的，加了它 HUD 才会跟着刷新价格）
-        foreach (var x in Ref.Items(Ref.Get(c, "clientItemFeatureBuying")))
-            parts.Add("f" + x);   // 顾客的买方特性（折价/多样化等）会影响价格，变了就重算
+        if (c.clientItemFeatureBuying != null)
+            foreach (var x in c.clientItemFeatureBuying)
+                parts.Add("f" + x);   // 顾客的买方特性（折价/多样化等）会影响价格，变了就重算
         return string.Join("|", parts);
     }
 
@@ -679,44 +586,44 @@ public static class Optimizer
 
     static long ValueOf(GameItem gi)
     {
-        long v = Ref.ToLong(Ref.Call0(gi, "GetNegociatedValue"), 0);
-        if (v <= 0) v = Ref.ToLong(Ref.Get(gi, "unitValue"), 0);
+        long v = 0;
+        try { v = gi.GetNegociatedValue(); } catch { }
+        if (v <= 0) v = gi.unitValue;
         return v;
     }
 
     /// <summary>
-    /// 扫描各售卖/仓储区收集物品；排除已售/垃圾桶/中转等非售卖区。
+    /// 扫描各售卖/仓储区收集物品；只扫玩家能拿去卖的存储区。
     /// needPrice=true（HUD 推荐）只保留已探到游戏价的物品；needPrice=false（给探测排队）不做价格过滤——
     /// 否则就成了"要先探到价，才肯去探价"的死结（v1.4.0 的实际 bug：探测一步都没跑过）。
     /// </summary>
     static List<Cand> Collect(StoreClient c, bool requireVariety, bool needPrice)
     {
         var result = new List<Cand>();
-        var seenPtr = new HashSet<long>();
+        var seen = new HashSet<GameItem>();
         _unpriced = 0;
 
         foreach (var (inv, zone) in ShopInventories.Enumerate())
         {
-            string invName = Ref.Get(inv, "identifier", "")?.ToString() ?? "";
-            if (string.IsNullOrEmpty(invName)) invName = zone;
-            foreach (var raw in Ref.Items(Ref.Get(inv, "childItems") ?? Ref.Get(inv, "children")))
+            string invName = string.IsNullOrEmpty(inv.identifier) ? zone : inv.identifier;
+            var items = inv.childItems;
+            if (items == null) continue;
+            foreach (var gi in items)
             {
-                var gi = raw as GameItem;
                 if (gi == null) continue;
 
                 bool ok;
                 try { ok = c.IsClientBuyingThisItem(gi); } catch { ok = false; }
                 if (!ok) continue;
 
-                var ptr = (long)((Il2CppObjectBase)gi).Pointer;
-                if (!seenPtr.Add(ptr)) continue;
+                if (!seen.Add(gi)) continue;
 
                 // 游戏自己的重复判定：已在多样性列表里 → 这位顾客不会再要同类
                 bool tracked = false;
                 try { tracked = c.IsItemInVarietyList(gi); } catch { }
                 if (requireVariety && tracked) continue;
 
-                long cnt = Ref.ToLong(Ref.Get(gi, "unitCount"), 1);
+                long cnt = gi.unitCount;
                 if (cnt <= 0) cnt = 1;
 
                 // 价格只认"摆上柜台探测"到的游戏真价；没探到（超出探测上限等）就不推荐它
@@ -727,12 +634,12 @@ public static class Optimizer
                     continue;
                 }
 
-                var gk = Ref.Get(gi, "identifier")?.ToString();
-                if (string.IsNullOrEmpty(gk)) gk = Ref.Get(gi, "name", "?")?.ToString();
+                var gk = gi.identifier;
+                if (string.IsNullOrEmpty(gk)) gk = gi.name ?? "?";
                 result.Add(new Cand
                 {
                     Item = gi,
-                    Name = $"{Ref.Get(gi, "name", "?")}[{invName}]",
+                    Name = $"{gi.name}[{invName}]",
                     GroupKey = gk,
                     Count = cnt,
                     Price = price,
@@ -743,59 +650,23 @@ public static class Optimizer
     }
 }
 
-/// <summary>找店内售卖/仓储库存（排除已售/垃圾桶/中转/隐藏等区域）。</summary>
+/// <summary>找店内售卖/仓储库存（EmporiumEntry 上玩家能拿去卖的区域，排除已售/垃圾桶/中转/设施等）。</summary>
 public static class ShopInventories
 {
-    // 这些区域不放可售商品：soldElement(已售陈列)、trash、drain、hidden、response(交互暂存)、
-    // swapBuffer(拖拽缓冲)、faucet/cassette/vending(设施)、afterhour(打烊区)
-    private static readonly string[] Blocked = { "sold", "trash", "drain", "hidden", "response", "swap", "faucet", "cassette", "vending", "afterhour" };
-
-    static bool IsBlocked(string propName)
-    {
-        var low = propName.ToLowerInvariant();
-        return Blocked.Any(b => low.Contains(b));
-    }
-
     public static IEnumerable<(GameInventory inv, string zone)> Enumerate()
     {
         var entry = EmporiumEntry.Instance;
         if (entry == null)
         {
-            Plugin.Log.LogWarning("EmporiumEntry.Instance 为空（不在店内场景？）");
+            BestDealMod.Log.Warning("EmporiumEntry.Instance 为空（不在店内场景？）");
             yield break;
         }
 
-        var seenPtr = new HashSet<long>();
-        foreach (var (found, zone) in Walk(entry, 2, "shop"))
-        {
-            var p = (long)((Il2CppObjectBase)found).Pointer;
-            if (seenPtr.Add(p)) yield return (found, zone);
-        }
+        if (entry.invElement != null) yield return (entry.invElement, "shop");
+        if (entry.showcaseElement != null) yield return (entry.showcaseElement, "showcase");
+        if (entry.frontInvinvElement != null) yield return (entry.frontInvinvElement, "front");
+        if (entry.backInvinvElement != null) yield return (entry.backInvinvElement, "back");
+        if (entry.bazarLeftinvElement != null) yield return (entry.bazarLeftinvElement, "bazar");
+        if (entry.hirelingInv != null) yield return (entry.hirelingInv, "hireling");
     }
-
-    static IEnumerable<(GameInventory inv, string zone)> Walk(object node, int depth, string zone)
-    {
-        if (node == null || depth < 0) yield break;
-        var t = node.GetType();
-        foreach (var p in t.GetProperties())
-        {
-            if (IsBlocked(p.Name)) continue;
-            object v;
-            try { v = p.GetValue(node); } catch { continue; }
-            if (v == null || v is string || v.GetType().IsPrimitive) continue;
-
-            if (v is GameInventory inv)
-            {
-                yield return (inv, Strip(zone));
-                foreach (var sub in Walk(inv, depth - 1, zone)) yield return sub;
-            }
-            else if (depth > 0 && (p.Name.EndsWith("Window") || p.Name.EndsWith("Element") ||
-                                   p.Name.EndsWith("Inventory") || p.Name.EndsWith("element")))
-            {
-                foreach (var sub in Walk(v, depth - 1, Strip(p.Name))) yield return sub;
-            }
-        }
-    }
-
-    static string Strip(string s) => s.Replace("Window", "").Replace("Element", "");
 }
