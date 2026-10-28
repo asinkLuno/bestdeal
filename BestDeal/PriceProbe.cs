@@ -33,7 +33,7 @@ public static class PriceProbe
         {
             if (!Running) return null;
             int done = Math.Max(0, _total - Queue.Count - (_cur != null ? 1 : 0));
-            return $"价格探测中 {done}/{_total}：物品会短暂摆上柜台，读完价自动收回";
+            return $"价格探测中 {done}/{_total}";
         }
     }
 

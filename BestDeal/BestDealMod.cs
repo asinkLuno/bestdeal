@@ -31,7 +31,7 @@ public class BestDealMod : IMod
     {
         EnsureHud();
         // 开局先给一行占位，进店就能看到 HUD、确认 mod 活着（顾客上门后被推荐清单替换）
-        Result.Set("BestDeal", new[] { "已加载：顾客到柜台开始对话后自动显示推荐清单" });
+        Result.Set("BestDeal", new[] { "已加载，等顾客上门" });
     }
 
     public void OnDisable() { }

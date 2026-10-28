@@ -27,7 +27,7 @@ public static class QuoteOptimizer
     {
         if (c == null)
         {
-            Result.Set("BestDeal", new[] { "暂无顾客（等顾客上门后自动提示）" });
+            Result.Set("BestDeal", new[] { "暂无顾客" });
             return;
         }
 
@@ -36,16 +36,13 @@ public static class QuoteOptimizer
         var cands = Collect(c, requireVariety, needPrice: true);
         if (cands.Count == 0)
         {
-            // 一样都没定价：可能只是还没探测（本来就会自动探），别急着说"他不买"
-            string note = PriceProbe.Running
-                ? "正在逐件摆上柜台探测价格…（探完自动更新）"
-                : (_unpriced > 0 ? $"候选 {_unpriced} 件，价格还没探到（自动重探中）"
-                                 : "他不会买你店里的任何东西");
-            Result.Set($"BestDeal — {name}", new[]
-            {
-                $"顾客：{name}  预算：{GetBudgetSafe(c)}  类别：{ClientDemand.TagsSummary(c)}",
-                note,
-            });
+            // 一样都没定价：可能只是还没探测，别急着说"他不买"；探测中进度行每帧都画着，不重复说
+            string note = PriceProbe.Running ? null
+                : _unpriced > 0 ? $"候选 {_unpriced} 件未探到价"
+                : "他不会买你店里的任何东西";
+            var idle = new List<string> { HeadLine(c) };
+            if (note != null) idle.Add(note);
+            Result.Set($"BestDeal — {name}", idle);
             return;
         }
 
@@ -56,6 +53,17 @@ public static class QuoteOptimizer
         List<List<Cand>> groups = requireVariety
             ? cands.GroupBy(x => x.GroupKey).Select(g => g.ToList()).ToList()
             : cands.Select(x => new List<Cand> { x }).ToList();
+
+        // 要求不重复时同类只卖一件，而成交读的是柜台：组里已有摆在柜台的同款，
+        // 就只留柜台那件参与计算。不然同价平挑会选中货架那件，"✔ 已在柜台"就丢了。
+        if (requireVariety)
+        {
+            foreach (var g in groups)
+            {
+                var onCtr = g.Where(x => x.OnCounter).ToList();
+                if (onCtr.Count > 0) { g.Clear(); g.AddRange(onCtr); }
+            }
+        }
 
         // 0/1 分组背包：容量=预算，每组最多取 1 件，最大化售出总额。
         // 重量必须用 cap+1 表示「放不下」——若截断到 cap，超预算的物品会被当成"刚好花光预算"，
@@ -105,51 +113,69 @@ public static class QuoteOptimizer
             }
         }
 
-        string head = $"顾客：{name}  预算：{GetBudgetSafe(c)}  类别：{ClientDemand.TagsSummary(c)}" +
-                      (requireVariety ? "  [要求不重复]" : "");
-        string skippedNote = _unpriced > 0 ? $"（另 {_unpriced} 件未探到价已跳过）" : "";
-
         // 候选都在预算之外：顾客一件也买不起（别推荐超预算的东西）
         if (picked.Count == 0)
         {
             Result.Set($"BestDeal — {name}", new[]
             {
-                head,
-                $"候选 {cands.Count} 件，但最便宜的也要 {cands.Min(x => x.Price)}，超出预算，他一件也买不起",
+                $"候选 {cands.Count} 件都超预算（最便宜 {cands.Min(x => x.Price)}）",
             });
             return;
         }
 
         long total = 0;
-        int onCounter = 0;
         foreach (var p in picked)
-        {
             total += p.Price;
-            if (p.OnCounter) onCounter++;
+
+        // ✔ 按同类给额度（同款有多件时，柜台上有任意一件同款就算已就位，别再让玩家搬）：
+        // 额度 = 柜台上同款件数 − 推荐里本来就是柜台实例的件数（它们自己直接打 ✔），
+        // 剩余额度抵给货架上的同款；不要求不重复、顾客买多件时，抵完的还是要搬。
+        var counterFree = new Dictionary<string, int>();
+        foreach (var x in cands)
+            if (x.OnCounter)
+                counterFree[x.GroupKey] = counterFree.TryGetValue(x.GroupKey, out var n) ? n + 1 : 1;
+        foreach (var p in picked)
+            if (p.OnCounter && counterFree.ContainsKey(p.GroupKey))
+                counterFree[p.GroupKey]--;
+
+        var placed = new bool[picked.Count];
+        for (int i = 0; i < picked.Count; i++)
+        {
+            var p = picked[i];
+            if (p.OnCounter)
+                placed[i] = true;
+            else if (counterFree.TryGetValue(p.GroupKey, out var free) && free > 0)
+            {
+                placed[i] = true;
+                counterFree[p.GroupKey] = free - 1;
+            }
         }
 
         var lines = new List<string>
         {
-            head,
+            HeadLine(c),
             $"可售出总额：{total}" +
             (GetBudgetSafe(c) > 0 ? $"（剩预算 {Math.Max(0, budget - total)}）" : "") +
-            $"，候选 {cands.Count} 件" + skippedNote,
+            $"，候选 {cands.Count} 件",
         };
-        foreach (var p in picked)
+        for (int i = 0; i < picked.Count; i++)
         {
-            lines.Add(p.OnCounter
-                ? $"✔ 已在柜台：{p.Name} ×{p.Count} = {p.Price}"
-                : $"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}");
+            var p = picked[i];
+            lines.Add(!placed[i] ? $"→ 拿上柜台：{p.Name} ×{p.Count} = {p.Price}"
+                : p.OnCounter ? $"✔ 已在柜台：{p.Name} ×{p.Count} = {p.Price}"
+                              : $"✔ 柜台已有同款：{p.Name} ×{p.Count} = {p.Price}");
             // 赝品警告：理由是游戏自己的本地化文本（顾客识破时说的原话），mod 不硬编码
             foreach (var w in Authenticity.FakeWarnings(p.Item))
                 lines.Add($"   {w}");
         }
-        lines.Add(onCounter > 0
-            ? $"共 {picked.Count} 件，其中 {onCounter} 件已在柜台"
-            : $"共 {picked.Count} 件");
 
         Result.Set($"BestDeal — {name}", lines);
     }
+
+    /// <summary>清单首行（标题里已有顾客名，正文不重复）：预算 + 想买类别。</summary>
+    static string HeadLine(StoreClient c) =>
+        $"预算：{GetBudgetSafe(c)}  类别：{ClientDemand.TagsSummary(c)}" +
+        (c.isRequireVariety ? "  [要求不重复]" : "");
 
     static long GetBudgetSafe(StoreClient c)
     {
