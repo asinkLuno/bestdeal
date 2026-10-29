@@ -12,3 +12,9 @@ obj/
 
 # SteamCMD 会写回发布物品 ID，保留本机配置，不覆盖示例
 workshop/*.vdf
+
+# 游戏资源本地提取输出与诊断数据（tools/README：不提交本地提取/诊断输出）
+extracted/
+
+# 本地截图
+屏幕截图_*.png

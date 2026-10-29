@@ -102,6 +102,10 @@ public static class PriceProbe
         {
             if (activeClient != null) activeClient.onItemAddedToCounters = null;
             gi.OnAddedToWeightedArea(ignoreOnItemAddedToWeighted: true);
+            // SetVariety 的加价位于被跳过的 onItemAddedToWeighted 回调中。
+            // 只补已核对的价格特征，不执行可能带有剧情副作用的委托。
+            if (client != null && client.isRequireVariety && GeneralHelper.IsItemOwned(gi))
+                gi.AddItemFeature(ItemFeatureList.VarietyBuyerBonus());
         }
         finally
         {

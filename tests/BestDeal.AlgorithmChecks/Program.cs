@@ -45,3 +45,4 @@ for (int i = 0; i < 300; i++)
     Check(random.Next(2_000_001, 5_000_000), groups.Select(row => row.Select(p => p * 100_003).ToArray()).ToArray());
 }
 Console.WriteLine("通过：10 个边界场景、同价稳定性 + 600 个固定种子穷举对照场景。");
+MarketForecastChecks.Run();

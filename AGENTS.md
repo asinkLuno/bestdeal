@@ -2,9 +2,11 @@
 
 ## 官方 modding 文档
 
-- 游戏官方 mod 编写指南（GitHub 仓库）：<https://github.com/dragonpan2/probably-stolen-modding>
-  - 含中文版 ModdingGuide。原生 mod 加载器（`Mods/` 文件夹 + `manifest.xml` + `IMod`）、
-    Harmony 补丁约定等权威说明以这个仓库为准。
+- 官方 modding 入门指南（中文版 README）：
+  <https://github.com/dragonpan2/probably-stolen-modding/blob/main/README.zh-CN.md>
+  - 面向初学者的项目结构、`manifest.xml`、`IMod`、构建与安装说明；阅读后继续看下面的完整制作指南。
+- 官方模组制作指南仓库：<https://github.com/dragonpan2/probably-stolen-modding>
+  - 原生 mod 加载器（`Mods/` 文件夹 + `manifest.xml` + `IMod`）、Harmony 补丁约定等权威说明以该仓库为准。
   - 游戏 API 的具体用法优先查该仓库；签名细节以反编译
     `Probably Stolen_Data/Managed/Assembly-CSharp.dll` 为准。
 

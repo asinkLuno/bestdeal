@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../BestDeal/Features/Quotes/GroupedKnapsack.cs" Link="GroupedKnapsack.cs" />
+    <Compile Include="../../BestDeal/Features/Market/MarketForecast.cs" Link="MarketForecast.cs" />
   </ItemGroup>
 </Project>

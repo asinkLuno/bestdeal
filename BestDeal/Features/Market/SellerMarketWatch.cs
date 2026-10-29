@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace BestDeal;
 
-/// <summary>只读匹配顾客待售物品与生效新闻，不预测行情或修改价格。</summary>
+/// <summary>只读匹配顾客待售物品与当前新闻和已知日程，不修改价格。</summary>
 internal static class SellerMarketWatch
 {
     internal static readonly List<string> Lines = new();
@@ -29,7 +29,7 @@ internal static class SellerMarketWatch
         {
             var deltas = MarketWatch.CurrentDeltas();
             // 与游戏检查顾客所售物品相同：前后柜台中尚未归玩家所有的物品。
-            var items = entry.GetAllNonOwnedItem().Where(x => x != null).Distinct();
+            var items = entry.GetAllNonOwnedItem().Where(x => x != null).Distinct().ToList();
             var matches = new Dictionary<string, HashSet<string>>();
             foreach (var item in items)
             {
@@ -52,6 +52,7 @@ internal static class SellerMarketWatch
                 lines.Add(L10n.Text("Affected") + string.Join(L10n.Text("ListSeparator"), names.Take(4)) + (names.Count > 4 ? L10n.Format("TypeCount", names.Count) : ""));
             }
             Lines.AddRange(lines);
+            Lines.AddRange(FutureMarketWatch.BuildLines(items, buying: true));
         });
     }
 }

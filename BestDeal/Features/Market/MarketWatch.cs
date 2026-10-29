@@ -51,6 +51,7 @@ public static class MarketWatch
         _nextCheck = Time.unscaledTime + RefreshInterval;
         HudContent.Preparation.Clear();
         HudContent.Preparation.AddRange(BuildLines());
+        HudContent.Preparation.AddRange(FutureMarketWatch.BuildLines(StockItems(includeShowcase: true), buying: false));
     }
 
     static List<string> BuildLines()
@@ -132,12 +133,12 @@ public static class MarketWatch
     }
 
     /// <summary>可挪动的库存物品（与推荐清单同一套区域，跳过已在橱窗的）。</summary>
-    static List<GameItem> StockItems()
+    static List<GameItem> StockItems(bool includeShowcase = false)
     {
         var result = new List<GameItem>();
         foreach (var (inv, zone) in ShopInventories.Enumerate())
         {
-            if (zone == "showcase") continue;   // 已经在橱窗里的不算"待摆"
+            if (zone == "showcase" && !includeShowcase) continue;   // 已经在橱窗里的不算"待摆"
             var items = inv.childItems;
             if (items == null) continue;
             foreach (var gi in items)

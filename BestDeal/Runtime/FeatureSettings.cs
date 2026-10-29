@@ -16,6 +16,7 @@ internal static class FeatureSettings
 
     internal static void Init(string modId)
     {
+        HeatSettingDisplay.Init(modId);
         var config = ModHelper.GetConfig(modId);
         _quotes = Define("customer_quotes", "SettingQuotes", "SettingQuotesTip");
         _maxStolenHeat = config.Define("max_stolen_heat", 100, "BestDeal",
