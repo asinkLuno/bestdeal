@@ -22,4 +22,38 @@
 - 代码按 `BestDeal/Runtime`、`Features`、`Game`、`Presentation` 分目录，统一使用 `BestDeal` 命名空间。
 - 分组背包在 `Features/Quotes/GroupedKnapsack.cs`，保持不依赖游戏类型；候选收集和展示规则在 `QuoteOptimizer.cs`。
 - 算法检查：`dotnet run --project tests/BestDeal.AlgorithmChecks -c Release`（无需游戏）；
-  编译检查优先使用 `-p:Deploy=false`，避免整理代码时覆盖正在使用的 mod。
+  每次更新完成后默认执行 Release 构建并部署到游戏，无需再次确认；仅中途编译检查使用 `-p:Deploy=false`。
+
+## Steam 创意工坊发布
+
+- 发布方式以官方 ModdingGuide 的 Steam 创意工坊章节为准；详细流程见 `docs/workshop.md`。
+- 现有 BestDeal 工坊条目 ID：`3828971953`，AppID：`4348910`。
+  更新时保留 `publishedfileid`，不要设为 `0` 或重新复制首次发布模板，否则会创建新条目。
+- 更新已有条目使用本地配置 `workshop/BestDeal.update.vdf`。
+  `workshop/BestDeal.vdf` 保留了首次上传配置且 `visibility=2`（隐藏），不要直接拿它更新公开条目。
+  更新配置只指定条目 ID、内容目录和更新说明，避免覆盖标题、描述、封面和可见性。
+- 发布前同步 `BestDeal/manifest.xml` 的 `ModVersion` 和
+  `BestDeal/Runtime/BestDealMod.cs` 的加载日志版本；`GameVersions` 仅填写实际验证过的版本。
+- 执行算法检查与 Release 构建部署，完成受影响功能的游戏内验收及 `mod-scan best_deal`。
+  当前机器若 PATH 中没有 `dotnet`，使用 `/home/deck/.dotnet/dotnet`：
+
+  ```bash
+  /home/deck/.dotnet/dotnet run --project tests/BestDeal.AlgorithmChecks -c Release
+  /home/deck/.dotnet/dotnet build BestDeal -c Release
+  ```
+
+- 上传内容来自 `/run/media/deck/SR256/steamapps/common/Probably Stolen/Mods/BestDeal/`，
+  根目录须直接包含 `manifest.xml` 和 `BestDeal.dll`；不上传源码仓库或整个 `bin` 目录。
+- 修改 `workshop/BestDeal.update.vdf` 的 `changenote`，准确说明本次改动，然后用原发布账号上传：
+
+  ```bash
+  steamcmd +login YOUR_STEAM_ACCOUNT +workshop_build_item "/home/deck/CODE/bestdeal/workshop/BestDeal.update.vdf" +quit
+  ```
+
+  密码和 Steam Guard 验证由用户在终端完成，不写进配置、命令或仓库。
+  本地部署成功不等于工坊上传成功；须确认 SteamCMD 的上传成功结果，并检查
+  <https://steamcommunity.com/sharedfiles/filedetails/?id=3828971953>。
+- 验证订阅版时，先把本地 `Mods/BestDeal/` 移到 `Mods/` 之外，否则同 ID 的本地副本会覆盖工坊副本。
+  重启游戏、启用订阅版并按游戏要求再次重启；测试完成后可恢复本地目录。
+- 本地 VDF 属于发布配置，另行备份，不覆盖已有条目 ID。`docs/workshop.md` 中“尚未上传”等
+  初次准备记录可能过时，判断现状应核对本地 VDF 和实际上传结果。

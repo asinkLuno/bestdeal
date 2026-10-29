@@ -10,7 +10,7 @@ namespace BestDeal;
 /// 涨价类：扫库存，有 affected 物品就提示摆进橱窗（display case，浏览客按含事件加成的价格买走）；
 /// 没有现货则提示改摆库存里最多的那个种类。
 /// 降价类：提示把对应类别的收购牌（sign_* 物品，ToolDirectory 注册、挂在橱窗吸引该类别卖家）摆上橱窗。
-/// 开店（PlayerStore.storeState == OPEN）后整个面板不再出现。
+/// 仅在开店前（PlayerStore.storeState == MORNING）显示，营业和闭店后隐藏。
 /// itemType → 收购牌的家族划分抄游戏自己的 TypeHelper.GetTypeColor 分组表。
 /// </summary>
 public static class MarketWatch
@@ -31,13 +31,13 @@ public static class MarketWatch
         (new[] { "WEAPON", "MELEE_WEAPON", "FIREARM", "MODDABLE", "GUN_MOD", "AMMUNITION", "MUNITION", "ARMOR" }, "firearm"),
     };
 
-    /// <summary>店铺是否处于非营业状态；是否正在接待顾客由 ClientSession 判断。</summary>
+    /// <summary>店铺是否处于开店前的早晨；是否正在接待顾客由 ClientSession 判断。</summary>
     public static bool WantsPanel()
     {
         try
         {
             if (!PlayerStore.HasInstance) return false;
-            return PlayerStore.Instance.storeState != PlayerStore.StoreState.OPEN;
+            return PlayerStore.Instance.storeState == PlayerStore.StoreState.MORNING;
         }
         catch { return false; }
     }
@@ -47,30 +47,16 @@ public static class MarketWatch
     {
         if (Time.unscaledTime < _nextCheck) return;
         _nextCheck = Time.unscaledTime + RefreshInterval;
-        HudContent.Set("BestDeal — 今日行情", BuildLines());
+        HudContent.Set(L10n.Text("MarketTitle"), BuildLines());
     }
 
     static List<string> BuildLines()
     {
         var lines = new List<string>();
-        var events = ActiveEvents();
-        var deltas = new Dictionary<string, int>();
-        if (events != null)
-        {
-            foreach (var ev in events)
-            {
-                if (ev?.negociationDatas == null) continue;
-                foreach (var nd in ev.negociationDatas)
-                {
-                    if (nd == null || string.IsNullOrEmpty(nd.itemType) || nd.value == 0) continue;
-                    // 多事件叠加时游戏是把 value 直接累加进 marketMult，这里同样按类别合并
-                    deltas[nd.itemType] = (deltas.TryGetValue(nd.itemType, out var v) ? v : 0) + nd.value;
-                }
-            }
-        }
+        var deltas = CurrentDeltas();
         if (deltas.Count == 0)
         {
-            lines.Add("今日无涨跌");
+            lines.Add(L10n.Text("NoChanges"));
             return lines;
         }
 
@@ -88,31 +74,52 @@ public static class MarketWatch
                 var inStock = AffectedInStock(stock, kv.Key);
                 if (inStock.Count > 0)
                 {
-                    lines.Add("   → 摆橱窗：" + string.Join("、", inStock));
+                    lines.Add(L10n.Text("Display") + string.Join(L10n.Text("ListSeparator"), inStock));
                 }
                 else
                 {
                     string top = TopStockType(stock);
                     if (top == null || top == suggestedTop)
                     {
-                        lines.Add("   → 无货");
+                        lines.Add(L10n.Text("OutOfStock"));
                     }
                     else
                     {
                         suggestedTop = top;
                         var names = AffectedInStock(stock, top, 2);
-                        lines.Add($"   → 无货；可摆：{ClientDemand.LocalizeTag(top)}（{string.Join("、", names)}）");
+                        lines.Add(L10n.Format("AlternativeStock", ClientDemand.LocalizeTag(top), string.Join(L10n.Text("ListSeparator"), names)));
                     }
                 }
             }
             else
             {
                 string sign = SignFor(kv.Key);
-                lines.Add(sign != null ? $"   → 挂收购牌：{sign}" : "   →无对应收购牌");
+                lines.Add(sign != null ? L10n.Format("BuyingSign", sign) : L10n.Text("NoSign"));
             }
         }
-        if (!any) lines.Add("今日无涨跌");
+        if (!any) lines.Add(L10n.Text("NoChanges"));
         return lines;
+    }
+
+    /// <summary>当前生效新闻按类别合并；供开店前行情和顾客收购提示共用。</summary>
+    internal static Dictionary<string, int> CurrentDeltas()
+    {
+        var events = ActiveEvents();
+        var deltas = new Dictionary<string, int>();
+        if (events != null)
+        {
+            foreach (var ev in events)
+            {
+                if (ev?.negociationDatas == null) continue;
+                foreach (var nd in ev.negociationDatas)
+                {
+                    if (nd == null || string.IsNullOrEmpty(nd.itemType) || nd.value == 0) continue;
+                    // 多事件叠加时游戏是把 value 直接累加进 marketMult，这里同样按类别合并
+                    deltas[nd.itemType] = (deltas.TryGetValue(nd.itemType, out var v) ? v : 0) + nd.value;
+                }
+            }
+        }
+        return deltas;
     }
 
     static List<StoreEvent> ActiveEvents()
@@ -151,7 +158,7 @@ public static class MarketWatch
         }
         // 行宽有限：最多列 cap 种，剩下的合并计数
         var parts = counts.Take(cap).Select(kv => kv.Value > 1 ? $"{kv.Key} ×{kv.Value}" : kv.Key).ToList();
-        if (counts.Count > cap) parts.Add($"等 {counts.Count} 种");
+        if (counts.Count > cap) parts.Add(L10n.Format("TypeCount", counts.Count));
         return parts;
     }
 

@@ -15,14 +15,14 @@ public class BestDealMod : IMod
     public void Init(ModManifest manifest)
     {
         Log = new ModLog(manifest);
-        Log.Log("BestDeal v2.6.0 已加载");
+        Log.Log("BestDeal v2.7.0 已加载");
     }
 
     public void OnEnable()
     {
         EnsureHud();
         // 开局先给一行占位，进店就能看到 HUD、确认 mod 活着（顾客上门后被推荐清单替换）
-        HudContent.Set("BestDeal", new[] { "暂无顾客" });
+        HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
     }
 
     public void OnDisable() { }

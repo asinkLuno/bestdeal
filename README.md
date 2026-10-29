@@ -33,3 +33,7 @@ F8 控制台可查看加载日志，运行 `mod-scan best_deal` 检查能力扫�
 - [创意工坊发布](docs/workshop.md)：SteamCMD 配置、隐藏测试及后续更新。
 - [诊断工具](tools/README.md)：查看游戏类型签名与 IL。
 - [官方 modding 指南](https://github.com/dragonpan2/probably-stolen-modding)：原生加载器和 Harmony 约定；游戏签名以本机 `Assembly-CSharp.dll` 为准。
+
+## 界面语言
+
+BestDeal 提示支持中文和英文，自动跟随游戏语言：`zh` 系列使用简体中文，其他语言使用英文。物品名、类别、鉴定评级及游戏内鉴定理由使用游戏自己的翻译，保留游戏支持的全部语言；不在 mod 中维护这些内置文本的中英文副本。无需额外语言文件或配置。切换游戏语言后，报价与卖家提醒约半秒内更新，早晨行情最多两秒内更新。

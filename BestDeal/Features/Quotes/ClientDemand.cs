@@ -4,7 +4,7 @@ namespace BestDeal;
 
 /// <summary>
 /// 需求识别：读取 StoreClient 的需求（想买的类别/物品、黑名单、预算约束），
-/// 用游戏自己的本地化表翻成中文；并提供需求指纹（编排层靠它发现"游戏刚填完需求"）。
+/// 用游戏自己的本地化表跟随当前语言；并提供需求指纹（编排层靠它发现"游戏刚填完需求"）。
 /// </summary>
 public static class ClientDemand
 {
@@ -13,8 +13,8 @@ public static class ClientDemand
         var parts = new List<string>();
         if (c.clientBuyingTagList != null) foreach (var x in c.clientBuyingTagList) parts.Add(LocalizeTag(x));
         if (c.clientBuyingIdList != null) foreach (var x in c.clientBuyingIdList) parts.Add(LocalizeId(x));
-        var s = string.Join("、", parts);
-        return s.Length == 0 ? "无限制" : s;
+        var s = string.Join(L10n.Text("ListSeparator"), parts);
+        return s.Length == 0 ? L10n.Text("Any") : s;
     }
 
     /// <summary>顾客是否已声明了任何想买的东西（到店后游戏才填，刚到时是空的）。</summary>
@@ -60,7 +60,7 @@ public static class ClientDemand
     {
         if (string.IsNullOrEmpty(key)) return key ?? "";
         var loc = "type_" + key.ToLowerInvariant();
-        var fallback = key == "LOTTERY_IS_WINNING_TAG" ? "中奖彩票" : key;
+        var fallback = key == "LOTTERY_IS_WINNING_TAG" ? L10n.Text("WinningTicket") : key;
         try
         {
             // 普通 GetLocalizedMechanic 缺键时会返回整句 translation error，而非 key。
@@ -71,7 +71,7 @@ public static class ClientDemand
         return fallback;
     }
 
-    /// <summary>物品 id → 中文名：item_scrap_metal_name → 废金属（Item 表）。查不到就用原值。</summary>
+    /// <summary>物品 id → 当前语言名称：item_scrap_metal_name → 废金属（Item 表）。查不到就用原值。</summary>
     static string LocalizeId(string id)
     {
         if (string.IsNullOrEmpty(id)) return id ?? "";

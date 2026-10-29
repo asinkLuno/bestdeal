@@ -25,7 +25,7 @@ public static class QuoteOptimizer
     {
         if (c == null)
         {
-            HudContent.Set("BestDeal", new[] { "暂无顾客" });
+            HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
             return;
         }
 
@@ -34,7 +34,7 @@ public static class QuoteOptimizer
         var cands = Collect(c, requireVariety);
         if (cands.Count == 0)
         {
-            HudContent.Set($"BestDeal — {name}", new[] { HeadLine(c), "无合适商品" });
+            HudContent.Set($"BestDeal — {name}", new[] { HeadLine(c), L10n.Text("NoItems") });
             return;
         }
 
@@ -48,13 +48,14 @@ public static class QuoteOptimizer
             : cands.Select(x => new List<Cand> { x }).ToList();
 
         var picked = GroupedKnapsack.Select(groups, budget, x => x.Price);
+        PreferCounterEquivalents(picked, cands);
 
         // 候选都在预算之外：顾客一件也买不起（别推荐超预算的东西）
         if (picked.Count == 0)
         {
             HudContent.Set($"BestDeal — {name}", new[]
             {
-                $"超预算（最低 {cands.Min(x => x.Price)}）",
+                L10n.Format("OverBudget", cands.Min(x => x.Price)),
             });
             return;
         }
@@ -66,14 +67,14 @@ public static class QuoteOptimizer
         var lines = new List<string>
         {
             HeadLine(c),
-            $"合计：{total}" +
-            (c.useClientBudget ? $"（余额 {Math.Max(0, budget - total)}）" : ""),
+            L10n.Format("Total", total) +
+            (c.useClientBudget ? L10n.Format("Remaining", Math.Max(0, budget - total)) : ""),
         };
         for (int i = 0; i < picked.Count; i++)
         {
             var p = picked[i];
-            lines.Add(!p.OnCounter ? $"→ 上柜：{p.Name} ×{p.Count} = {p.Price}"
-                : $"✔ 在柜：{p.Name} ×{p.Count} = {p.Price}");
+            lines.Add(!p.OnCounter ? $"- {p.Name} ×{p.Count} = {p.Price}"
+                : $"✔ {p.Name} ×{p.Count} = {p.Price}");
             // 赝品警告：理由是游戏自己的本地化文本（顾客识破时说的原话），mod 不硬编码
             foreach (var w in Authenticity.FakeWarnings(p.Item))
                 lines.Add($"   {w}");
@@ -84,8 +85,30 @@ public static class QuoteOptimizer
 
     /// <summary>清单首行（标题里已有顾客名，正文不重复）：预算 + 想买类别。</summary>
     static string HeadLine(StoreClient c) =>
-        $"预算：{ClientDemand.GetBudgetSafe(c)}  类别：{ClientDemand.TagsSummary(c)}" +
-        (c.isRequireVariety ? "  [不重复]" : "");
+        L10n.Format("Demand", ClientDemand.GetBudgetSafe(c), ClientDemand.TagsSummary(c)) +
+        (c.isRequireVariety ? L10n.Text("NoDuplicates") : "");
+
+    // 保留最优金额和数量，用柜台上的等价同款替换推荐实例。
+    // 先占用已经选中的柜台物品，避免一件实物被多条推荐重复使用。
+    static void PreferCounterEquivalents(List<Cand> picked, List<Cand> candidates)
+    {
+        var used = new HashSet<GameItem>(picked.Where(x => x.OnCounter).Select(x => x.Item));
+        for (int i = 0; i < picked.Count; i++)
+        {
+            var original = picked[i];
+            if (original.OnCounter) continue;
+            var warnings = Authenticity.FakeWarnings(original.Item);
+            var replacement = candidates.FirstOrDefault(x => x.OnCounter
+                && !used.Contains(x.Item)
+                && x.GroupKey == original.GroupKey
+                && x.Count == original.Count
+                && x.Price == original.Price
+                && warnings.SequenceEqual(Authenticity.FakeWarnings(x.Item)));
+            if (replacement == null) continue;
+            picked[i] = replacement;
+            used.Add(replacement.Item);
+        }
+    }
 
     /// <summary>
     /// 扫描各售卖/仓储区收集物品；只扫玩家能拿去卖的存储区。
@@ -96,9 +119,8 @@ public static class QuoteOptimizer
         var result = new List<Cand>();
         var seen = new HashSet<GameItem>();
 
-        foreach (var (inv, zone) in ShopInventories.Enumerate())
+        foreach (var (inv, _) in ShopInventories.Enumerate())
         {
-            string invName = string.IsNullOrEmpty(inv.identifier) ? zone : inv.identifier;
             var items = inv.childItems;
             if (items == null) continue;
             foreach (var gi in items)
@@ -128,7 +150,7 @@ public static class QuoteOptimizer
                 result.Add(new Cand
                 {
                     Item = gi,
-                    Name = $"{gi.name}[{invName}]",
+                    Name = gi.name,
                     GroupKey = gk,
                     Count = cnt,
                     Price = price,

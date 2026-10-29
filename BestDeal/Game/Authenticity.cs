@@ -12,18 +12,18 @@ namespace BestDeal;
 public static class Authenticity
 {
     // 与游戏 InsCigaretteHelper / InsStampHelper 的质疑判定及本地化映射一致。
-    static readonly (string Tag, string Key, string Fallback)[] InspectionIssues =
+    static readonly (string Tag, string Key)[] InspectionIssues =
     {
-        ("CIGARETTE_LETTERING_ISSUE", "ins_cig_issue_lettering", "香烟字样有问题"),
-        ("CIGARETTE_COLOR_ISSUE", "ins_cig_issue_color", "香烟颜色有问题"),
-        ("CIGARETTE_SEAL_ISSUE", "ins_cig_issue_seal", "香烟封条有问题"),
-        ("CIGARETTE_LOGO_ISSUE", "ins_cig_issue_logo", "香烟标志有问题"),
-        ("CIGARETTE_BOX_ISSUE", "ins_cig_issue_box", "烟盒有问题"),
-        ("STAMP_LETTERING_ISSUE", "ins_cig_issue_lettering", "票券字样有问题"),
-        ("STAMP_LOGO_ISSUE", "ins_cig_issue_logo", "票券标志有问题"),
-        ("STAMP_SEAL_ISSUE", "ins_cig_issue_seal", "票券封条有问题"),
-        ("STAMP_AMOUNT_ISSUE", "ins_stamp_issue_amount", "票券面额有问题"),
-        ("STAMP_CHIP_ISSUE", "ins_stamp_issue_chip", "票券芯片有问题"),
+        ("CIGARETTE_LETTERING_ISSUE", "ins_cig_issue_lettering"),
+        ("CIGARETTE_COLOR_ISSUE", "ins_cig_issue_color"),
+        ("CIGARETTE_SEAL_ISSUE", "ins_cig_issue_seal"),
+        ("CIGARETTE_LOGO_ISSUE", "ins_cig_issue_logo"),
+        ("CIGARETTE_BOX_ISSUE", "ins_cig_issue_box"),
+        ("STAMP_LETTERING_ISSUE", "ins_cig_issue_lettering"),
+        ("STAMP_LOGO_ISSUE", "ins_cig_issue_logo"),
+        ("STAMP_SEAL_ISSUE", "ins_cig_issue_seal"),
+        ("STAMP_AMOUNT_ISSUE", "ins_stamp_issue_amount"),
+        ("STAMP_CHIP_ISSUE", "ins_stamp_issue_chip"),
     };
 
     /// <summary>检查台实际状态；匹配仅表示标称属实，不能据此推断是真品。</summary>
@@ -41,11 +41,11 @@ public static class Authenticity
                 counterfeit |= f.realCondition.identifier == "counterfeitCigarette" ||
                                f.realCondition.identifier == "counterfeitStamp";
                 if (string.IsNullOrEmpty(actual)) continue;
-                var line = $"实际：{actual}";
+                var line = L10n.Format("ActualCondition", actual);
                 if (f.fakeCondition != null)
                     line += f.IsFeatureMatch()
-                        ? "（标称一致）"
-                        : $"　标称：{f.GetBaseFakeDisplay()}（不符）";
+                        ? L10n.Text("MatchesClaim")
+                        : L10n.Format("ClaimMismatch", f.GetBaseFakeDisplay());
                 if (!lines.Contains(line)) lines.Add(line);
             }
             catch { } // 单个特征不可用不影响其余鉴定结果
@@ -55,14 +55,14 @@ public static class Authenticity
         {
             if (!item.IsTag(issue.Tag)) continue;
             string reason = null;
-            try { reason = LocHelper.GetLocalizedMechanic(issue.Key); } catch { }
-            if (string.IsNullOrEmpty(reason) || reason == issue.Key) reason = issue.Fallback;
-            lines.Add($"疑点：{reason}");
+            try { reason = LocHelper.GetLocalizedMechanicOrDefault(issue.Key, ""); } catch { }
+            if (string.IsNullOrEmpty(reason) || reason == issue.Key) continue;
+            lines.Add(L10n.Format("Issue", reason));
             reasonCount++;
         }
         if (counterfeit && reasonCount == 0)
-            lines.Add("赝品（外观疑点未知）");
-        if (lines.Count == 0) lines.Add("真伪未知");
+            lines.Add(L10n.Text("CounterfeitUnknown"));
+        if (lines.Count == 0) lines.Add(L10n.Text("AuthenticityUnknown"));
         return lines;
     }
 
@@ -81,7 +81,7 @@ public static class Authenticity
             string reason = null;
             try { reason = f.CreateCustomerConfrontDialog()?.plainText; } catch { }
             if (string.IsNullOrEmpty(reason)) continue;
-            var line = f.IsExposed() ? $"⚠ 已识破：{reason}" : $"⚠ {reason}";
+            var line = f.IsExposed() ? L10n.Format("Exposed", reason) : $"⚠ {reason}";
             if (!lines.Contains(line)) lines.Add(line);
         }
         return lines;

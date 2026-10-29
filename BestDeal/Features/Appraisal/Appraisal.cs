@@ -36,7 +36,7 @@ public static class Appraisal
             string name = string.IsNullOrEmpty(item.name) ? "?" : item.name;
             if (insp.magnifyingGlass != null && insp.magnifyingGlass.activeInHierarchy)
                 Lines.AddRange(Authenticity.InspectionLines(item));
-            if (Lines.Count > 0) Title = $"鉴定 — {name}";
+            if (Lines.Count > 0) Title = L10n.Format("AppraisalTitle", name);
 
             var panel = insp.appraisalPanel;
             if (panel == null || !panel.activeInHierarchy) return;
@@ -46,17 +46,16 @@ public static class Appraisal
             try { correct = AppraisalHelper.GetCorrectBaseValue(item); } catch { }
             if (correct <= 0) return;
 
-            Title = $"鉴定 — {name}";
-            Lines.Add($"真值：{correct}");
+            Title = L10n.Format("AppraisalTitle", name);
+            Lines.Add(L10n.Format("TrueValue", correct));
 
             int input = 0;
             try { input = item.GetTagReadonly(TagInput)?.GetInt() ?? 0; } catch { }
             if (input <= 0) return;                       // 没填过价（标签缺失/还没解析出数字）
             if (input == correct)
-                Lines.Add($"估价：{input} · {QualityName(GradeOf(correct, input))} ✓");
+                Lines.Add(L10n.Format("EstimateExact", input, QualityName(GradeOf(correct, input))));
             else
-                Lines.Add($"估价：{input} · {QualityName(GradeOf(correct, input))}" +
-                          $"（{(input < correct ? "偏低" : "偏高")}）");
+                Lines.Add(L10n.Format("Estimate", input, QualityName(GradeOf(correct, input)), L10n.Text(input < correct ? "TooLow" : "TooHigh")));
         }
         catch { }   // 检查台字段在场景切换瞬间可能失效，提示失败就当没有
     }
@@ -70,10 +69,10 @@ public static class Appraisal
         return value >= Pct(125) ? 5 : value >= Pct(115) ? 4 : value >= Pct(110) ? 3 : 2;
     }
 
-    /// <summary>评级名：游戏自己的 appraisal_quality_* 本地化，查不到退回中文。</summary>
+    /// <summary>评级名：游戏自己的 appraisal_quality_* 本地化，完全使用游戏当前语言的文本。</summary>
     static string QualityName(int grade)
     {
-        var key = "appraisal_quality_" + grade switch
+        var suffix = grade switch
         {
             1 => "perfect",
             2 => "excellent",
@@ -83,10 +82,11 @@ public static class Appraisal
         };
         try
         {
-            var s = LocHelper.GetLocalizedMechanic(key);
+            var key = "appraisal_quality_" + suffix;
+            var s = LocHelper.GetLocalizedMechanicOrDefault(key, "");
             if (!string.IsNullOrEmpty(s) && s != key) return s;
         }
         catch { }
-        return grade switch { 1 => "完美", 2 => "极好", 3 => "不错", 4 => "一般", _ => "离谱" };
+        return "";
     }
 }

@@ -26,13 +26,13 @@ public static class PriceProbe
             // 已在柜台的实例直接读真实价格，避免再次执行挂特征钩子。
             if (ShopInventories.BackCounter?.childItems?.Contains(gi) == true
                 || ShopInventories.CounterAlt?.childItems?.Contains(gi) == true)
-                return gi.GetNegociatedValue();
+                return ReadAndLog(client, gi, true);
 
             var saved = Snapshot(gi);
             try
             {
                 AttachCounterFeatures(client, gi);
-                return gi.GetNegociatedValue();
+                return ReadAndLog(client, gi, false);
             }
             finally
             {
@@ -44,6 +44,33 @@ public static class PriceProbe
             BestDealMod.Log.Warning($"价格模拟：{NameOf(gi)} 读价失败：{e.Message}");
             return 0;
         }
+    }
+
+    static StoreClient _loggedClient;
+    static readonly Dictionary<GameItem, string> _loggedPrices = new Dictionary<GameItem, string>();
+
+    // 每个顾客仅在物品报价或柜台状态变化时记录，保留模拟时的特征供实际上柜后对照。
+    static long ReadAndLog(StoreClient client, GameItem item, bool onCounter)
+    {
+        long price = item.GetNegociatedValue();
+        try
+        {
+            if (!ReferenceEquals(_loggedClient, client))
+            {
+                _loggedClient = client;
+                _loggedPrices.Clear();
+            }
+            string features = string.Join(",", item.itemFeatures.Select(f =>
+                $"{f.identifier}:{f.GetValueStage()}:{f.GetCurrentValueMod()}:{(f.isDisabled ? "off" : "on")}"));
+            string state = $"counter={onCounter} price={price} count={item.unitCount} base={item.unitValue} owned={GeneralHelper.IsItemOwned(item)} features=[{features}]";
+            if (!_loggedPrices.TryGetValue(item, out var previous) || previous != state)
+            {
+                _loggedPrices[item] = state;
+                BestDealMod.Log.Log($"[报价诊断] client={client?.identifier} item={item.identifier}#{item.GetUniqueID()} {NameOf(item)} {state}");
+            }
+        }
+        catch { /* 诊断失败不能影响报价。 */ }
+        return price;
     }
 
     /// <summary>

@@ -7,7 +7,7 @@ namespace BestDeal;
 /// 编排层：维护"当前顾客"，把游戏事件（到店/离店）和每帧轮询转成对功能模块的调用。
 /// 状态机：无顾客 →(StartMainDialogue)→ 已到店 ──需求指纹或柜台内容变化──► 重算报价
 /// （QuoteOptimizer 内部同步模拟读价，无需跨帧的探测排队）。
-/// 还没开店（storeState != OPEN）且无顾客时，HUD 改由 MarketWatch 显示当日涨跌价行情；
+/// 开店前的早晨（storeState == MORNING）且无顾客时，HUD 改由 MarketWatch 显示当日涨跌价行情；
 /// 开店/顾客到店的瞬间把行情面板换回常规面板。
 /// </summary>
 public static class ClientSession
@@ -53,7 +53,7 @@ public static class ClientSession
             if (_marketPanelShown)
             {
                 _marketPanelShown = false;
-                if (CurrentClient == null) HudContent.Set("BestDeal", new[] { "暂无顾客" });
+                if (CurrentClient == null) HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
             }
 
             PollRequirement();
@@ -73,7 +73,13 @@ public static class ClientSession
     static void PollRequirement()
     {
         var c = CurrentClient;
-        if (c == null) { _lastReqSig = null; _lastCounterSig = null; return; }
+        if (c == null)
+        {
+            _lastReqSig = null;
+            _lastCounterSig = null;
+            HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
+            return;
+        }
         if (Time.unscaledTime < _nextReqCheck) return;
         _nextReqCheck = Time.unscaledTime + 0.5f;
 
@@ -89,7 +95,7 @@ public static class ClientSession
 
     static string SafeSig(StoreClient c)
     {
-        try { return ClientDemand.RequirementSignature(c); }
+        try { return L10n.LocaleCode + "|" + ClientDemand.RequirementSignature(c); }
         catch { return null; }
     }
 
