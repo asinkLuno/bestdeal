@@ -23,6 +23,11 @@ public static class QuoteOptimizer
 
     public static void Run(StoreClient c)
     {
+        if (!FeatureSettings.Quotes)
+        {
+            HudContent.Lines.Clear();
+            return;
+        }
         if (c == null)
         {
             HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
@@ -76,8 +81,9 @@ public static class QuoteOptimizer
             lines.Add(!p.OnCounter ? $"- {p.Name} ×{p.Count} = {p.Price}"
                 : $"✔ {p.Name} ×{p.Count} = {p.Price}");
             // 赝品警告：理由是游戏自己的本地化文本（顾客识破时说的原话），mod 不硬编码
-            foreach (var w in Authenticity.FakeWarnings(p.Item))
-                lines.Add($"   {w}");
+            if (FeatureSettings.Authenticity)
+                foreach (var w in Authenticity.FakeWarnings(p.Item))
+                    lines.Add($"   {w}");
         }
 
         HudContent.Set($"BestDeal — {name}", lines);
@@ -126,6 +132,9 @@ public static class QuoteOptimizer
             foreach (var gi in items)
             {
                 if (gi == null) continue;
+                // 按实际热度过滤；阈值包含边界，无赃物状态的商品视为无热度。
+                if (StolenHelper.IsStolenItem(gi)
+                    && StolenHelper.GetFoundChance(gi) > FeatureSettings.MaxStolenHeat) continue;
 
                 bool ok;
                 try { ok = c.IsClientBuyingThisItem(gi); } catch { ok = false; }

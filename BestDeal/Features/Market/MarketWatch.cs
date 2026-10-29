@@ -19,6 +19,8 @@ public static class MarketWatch
 
     static float _nextCheck;
 
+    internal static void Invalidate() => _nextCheck = 0f;
+
     // 事件 itemType → 收购牌（item_sign_<key>_name 本地化）。家族与 TypeHelper.GetTypeColor 一致。
     static readonly (string[] tags, string signKey)[] SignFamilies =
     {

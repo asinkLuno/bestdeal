@@ -13,6 +13,18 @@ internal static class L10n
 
     static readonly Dictionary<string, (string Chinese, string English)> Strings = new()
     {
+        ["SettingQuotes"] = ("顾客报价推荐", "Customer quote recommendations"),
+        ["SettingQuotesTip"] = ("按顾客需求和预算推荐售卖组合，显示库存位置和柜台就位标记。", "Recommend items within the customer's budget, with inventory locations and counter markers."),
+        ["SettingStolenHeat"] = ("推荐赃物最高热度", "Maximum stolen heat for recommendations"),
+        ["SettingStolenHeatTip"] = ("仅推荐热度不超过此值的商品，包括已在柜台上的商品。0：仅无热度；100：允许最高 100 热度。默认 100。", "Only recommend items with heat at or below this value, including counter items. 0: no heat; 100: allow heat up to 100. Default: 100."),
+        ["SettingAuthenticity"] = ("真伪提醒", "Authenticity hints"),
+        ["SettingAuthenticityTip"] = ("显示放大镜检查中的实际状态、标称差异与赝品依据，以及推荐清单中的赝品警告。", "Show actual condition, claim mismatches and counterfeit clues during inspection, plus counterfeit warnings in recommendations."),
+        ["SettingAppraisal"] = ("鉴定估价提示", "Appraisal hints"),
+        ["SettingAppraisalTip"] = ("鉴定估价时显示真实价值及当前输入的评级。", "Show actual value and the grade of your current estimate during appraisal."),
+        ["SettingMorningMarket"] = ("开店前行情", "Morning market hints"),
+        ["SettingMorningMarketTip"] = ("开店前显示新闻涨跌、橱窗库存建议和收购牌提示。", "Show market news, display stock suggestions and buying signs before opening."),
+        ["SettingSellerMarket"] = ("卖家新闻提醒", "Seller market news"),
+        ["SettingSellerMarketTip"] = ("提示卖家待售物品涉及的新闻涨跌。", "Show market news affecting items offered by sellers."),
         ["NoCustomer"] = ("暂无顾客", "No customer"),
         ["NoItems"] = ("无合适商品", "No suitable items"),
         ["Any"] = ("无限制", "Any"),

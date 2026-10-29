@@ -15,7 +15,8 @@ public class BestDealMod : IMod
     public void Init(ModManifest manifest)
     {
         Log = new ModLog(manifest);
-        Log.Log("BestDeal v2.7.0 已加载");
+        FeatureSettings.Init(manifest.ID);
+        Log.Log("BestDeal v2.8.0 已加载");
     }
 
     public void OnEnable()

@@ -34,10 +34,11 @@ public static class Appraisal
             var item = insp.currentInspectingItem;
             if (item == null) return;
             string name = string.IsNullOrEmpty(item.name) ? "?" : item.name;
-            if (insp.magnifyingGlass != null && insp.magnifyingGlass.activeInHierarchy)
+            if (FeatureSettings.Authenticity && insp.magnifyingGlass != null && insp.magnifyingGlass.activeInHierarchy)
                 Lines.AddRange(Authenticity.InspectionLines(item));
             if (Lines.Count > 0) Title = L10n.Format("AppraisalTitle", name);
 
+            if (!FeatureSettings.Appraisal) return;
             var panel = insp.appraisalPanel;
             if (panel == null || !panel.activeInHierarchy) return;
             if (!item.IsTag(TagItem)) return;

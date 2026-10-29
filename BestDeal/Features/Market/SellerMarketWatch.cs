@@ -15,7 +15,7 @@ internal static class SellerMarketWatch
     {
         var client = ClientSession.CurrentClient;
         var entry = EmporiumEntry.Instance;
-        if (entry == null || client == null || client.isBusinessComplete || !client.IsClientSelling())
+        if (!FeatureSettings.SellerMarket || entry == null || client == null || client.isBusinessComplete || !client.IsClientSelling())
         {
             Lines.Clear();
             _client = null;

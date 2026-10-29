@@ -18,13 +18,23 @@ public static class ClientSession
     private static float _nextReqCheck;
     private static bool _marketPanelShown; // 上一次写 HUD 的是不是行情面板（切换时负责收尾）
 
+    internal static void Invalidate()
+    {
+        _lastReqSig = null;
+        _lastCounterSig = null;
+        _nextReqCheck = 0f;
+        HudContent.Lines.Clear();
+        MarketWatch.Invalidate();
+    }
+
     // 顾客开始对话 = 顾客已到柜台，自动计算一次
     internal static void OnClientArrived(StoreClient __instance)
     {
         CurrentClient = __instance;
         _lastReqSig = null;
         _nextReqCheck = 0f;
-        TryRun("自动计算", () => QuoteOptimizer.Run(CurrentClient));
+        if (FeatureSettings.Quotes)
+            TryRun("自动计算", () => QuoteOptimizer.Run(CurrentClient));
         _lastReqSig = SafeSig(__instance);
     }
 
@@ -44,7 +54,7 @@ public static class ClientSession
             if (EmporiumEntry.Instance == null) return;               // 不在店内场景（主菜单/读盘）：不扫库存、不重算
 
             // 开店前行情面板：涨跌价新闻 + 摆橱窗/挂收购牌提示；开店（或顾客到店）后不再显示
-            if (CurrentClient == null && MarketWatch.WantsPanel())
+            if (FeatureSettings.MorningMarket && CurrentClient == null && MarketWatch.WantsPanel())
             {
                 _marketPanelShown = true;
                 MarketWatch.Tick();
@@ -72,6 +82,11 @@ public static class ClientSession
     /// </summary>
     static void PollRequirement()
     {
+        if (!FeatureSettings.Quotes)
+        {
+            HudContent.Lines.Clear();
+            return;
+        }
         var c = CurrentClient;
         if (c == null)
         {
