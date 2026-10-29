@@ -23,7 +23,7 @@ public static class ClientSession
         _lastReqSig = null;
         _lastCounterSig = null;
         _nextReqCheck = 0f;
-        HudContent.Lines.Clear();
+        HudContent.ClearQuote();
         MarketWatch.Invalidate();
     }
 
@@ -31,9 +31,12 @@ public static class ClientSession
     internal static void OnClientArrived(StoreClient __instance)
     {
         CurrentClient = __instance;
+        HudContent.Clear();
+        MarketWatch.Invalidate();
         _lastReqSig = null;
+        _lastCounterSig = null;
         _nextReqCheck = 0f;
-        if (FeatureSettings.Quotes)
+        if (FeatureSettings.Quotes && CurrentClient.IsClientBuying())
             TryRun("自动计算", () => QuoteOptimizer.Run(CurrentClient));
         _lastReqSig = SafeSig(__instance);
     }
@@ -43,6 +46,8 @@ public static class ClientSession
     {
         if (!ReferenceEquals(CurrentClient, __instance)) return;
         CurrentClient = null;
+        HudContent.ClearQuote();
+        SellerMarketWatch.Lines.Clear();
         _lastReqSig = null;
     }
 
@@ -51,7 +56,15 @@ public static class ClientSession
     {
         try
         {
-            if (EmporiumEntry.Instance == null) return;               // 不在店内场景（主菜单/读盘）：不扫库存、不重算
+            if (EmporiumEntry.Instance == null)
+            {
+                CurrentClient = null;
+                HudContent.Clear();
+                MarketWatch.Invalidate();
+                return;
+            }
+            if (CurrentClient != null && CurrentClient.isBusinessComplete)
+                OnBusinessDone(CurrentClient);
 
             // 开店前行情面板：涨跌价新闻 + 摆橱窗/挂收购牌提示；开店（或顾客到店）后不再显示
             if (FeatureSettings.MorningMarket && CurrentClient == null && MarketWatch.WantsPanel())
@@ -63,7 +76,7 @@ public static class ClientSession
             if (_marketPanelShown)
             {
                 _marketPanelShown = false;
-                if (CurrentClient == null) HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
+                HudContent.Preparation.Clear();
             }
 
             PollRequirement();
@@ -84,7 +97,7 @@ public static class ClientSession
     {
         if (!FeatureSettings.Quotes)
         {
-            HudContent.Lines.Clear();
+            HudContent.ClearQuote();
             return;
         }
         var c = CurrentClient;
@@ -92,7 +105,12 @@ public static class ClientSession
         {
             _lastReqSig = null;
             _lastCounterSig = null;
-            HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
+            HudContent.ClearQuote();
+            return;
+        }
+        if (!c.IsClientBuying())
+        {
+            HudContent.ClearQuote();
             return;
         }
         if (Time.unscaledTime < _nextReqCheck) return;
@@ -103,7 +121,7 @@ public static class ClientSession
         bool counterChanged = counterSig != null && _lastCounterSig != null && counterSig != _lastCounterSig;
         if (counterSig != null) _lastCounterSig = counterSig;
 
-        if (sig == _lastReqSig && !counterChanged) return;
+        if (sig == _lastReqSig && !counterChanged && HudContent.QuoteSummary.Count > 0) return;
         _lastReqSig = sig;
         QuoteOptimizer.Run(c);
     }

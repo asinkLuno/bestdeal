@@ -25,21 +25,23 @@ public static class QuoteOptimizer
     {
         if (!FeatureSettings.Quotes)
         {
-            HudContent.Lines.Clear();
+            HudContent.ClearQuote();
             return;
         }
         if (c == null)
         {
-            HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
+            HudContent.ClearQuote();
             return;
         }
 
-        var name = string.IsNullOrEmpty(c.displayName) ? "?" : c.displayName;
+        HudContent.ClearQuote();
+        HudContent.QuoteSummary.Add(HeadLine(c));
+        HudContent.QuoteSummary.Add(L10n.Format("HeatFilter", FeatureSettings.MaxStolenHeat));
         bool requireVariety = c.isRequireVariety;
         var cands = Collect(c, requireVariety);
         if (cands.Count == 0)
         {
-            HudContent.Set($"BestDeal — {name}", new[] { HeadLine(c), L10n.Text("NoItems") });
+            HudContent.QuoteItems.Add(L10n.Text("NoItems"));
             return;
         }
 
@@ -58,10 +60,7 @@ public static class QuoteOptimizer
         // 候选都在预算之外：顾客一件也买不起（别推荐超预算的东西）
         if (picked.Count == 0)
         {
-            HudContent.Set($"BestDeal — {name}", new[]
-            {
-                L10n.Format("OverBudget", cands.Min(x => x.Price)),
-            });
+            HudContent.QuoteItems.Add(L10n.Format("OverBudget", cands.Min(x => x.Price)));
             return;
         }
 
@@ -69,29 +68,26 @@ public static class QuoteOptimizer
         foreach (var p in picked)
             total += p.Price;
 
-        var lines = new List<string>
+        HudContent.QuoteSummary.Add(L10n.Format("Total", total) +
+            (c.useClientBudget ? L10n.Format("Remaining", Math.Max(0, budget - total)) : ""));
+        foreach (bool onCounter in new[] { false, true })
         {
-            HeadLine(c),
-            L10n.Format("Total", total) +
-            (c.useClientBudget ? L10n.Format("Remaining", Math.Max(0, budget - total)) : ""),
-        };
-        for (int i = 0; i < picked.Count; i++)
-        {
-            var p = picked[i];
-            lines.Add(!p.OnCounter ? $"- {p.Name} ×{p.Count} = {p.Price}"
-                : $"✔ {p.Name} ×{p.Count} = {p.Price}");
-            // 赝品警告：理由是游戏自己的本地化文本（顾客识破时说的原话），mod 不硬编码
-            if (FeatureSettings.Authenticity)
-                foreach (var w in Authenticity.FakeWarnings(p.Item))
-                    lines.Add($"   {w}");
+            var items = picked.Where(x => x.OnCounter == onCounter).ToList();
+            if (items.Count == 0) continue;
+            HudContent.QuoteItems.Add(L10n.Text(onCounter ? "OnCounter" : "ToCounter"));
+            foreach (var p in items)
+            {
+                HudContent.QuoteItems.Add($"{(onCounter ? "✓" : "•")} {p.Name} ×{p.Count} = {p.Price}");
+                if (FeatureSettings.Authenticity)
+                    foreach (var warning in Authenticity.FakeWarnings(p.Item))
+                        HudContent.QuoteItems.Add($"    ⚠ {warning}");
+            }
         }
-
-        HudContent.Set($"BestDeal — {name}", lines);
     }
 
     /// <summary>清单首行（标题里已有顾客名，正文不重复）：预算 + 想买类别。</summary>
     static string HeadLine(StoreClient c) =>
-        L10n.Format("Demand", ClientDemand.GetBudgetSafe(c), ClientDemand.TagsSummary(c)) +
+        L10n.Format("Demand", c.useClientBudget ? ClientDemand.GetBudgetSafe(c).ToString() : L10n.Text("Any"), ClientDemand.TagsSummary(c)) +
         (c.isRequireVariety ? L10n.Text("NoDuplicates") : "");
 
     // 保留最优金额和数量，用柜台上的等价同款替换推荐实例。

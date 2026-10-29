@@ -22,11 +22,16 @@ public class BestDealMod : IMod
     public void OnEnable()
     {
         EnsureHud();
-        // 开局先给一行占位，进店就能看到 HUD、确认 mod 活着（顾客上门后被推荐清单替换）
-        HudContent.Set("BestDeal", new[] { L10n.Text("NoCustomer") });
+        HudContent.Clear();
     }
 
-    public void OnDisable() { }
+    public void OnDisable()
+    {
+        if (Hud.Instance != null) UnityEngine.Object.Destroy(Hud.Instance.gameObject);
+        ClientSession.CurrentClient = null;
+        HudContent.Clear();
+        SellerMarketWatch.Lines.Clear();
+    }
 
     internal static void EnsureHud()
     {

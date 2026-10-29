@@ -2,16 +2,22 @@ using System.Collections.Generic;
 
 namespace BestDeal;
 
-/// <summary>悬浮窗状态（Hud 每帧读取；由编排层/功能层写入）。</summary>
+/// <summary>按玩家任务保存展示状态；各功能只更新自己的内容。</summary>
 internal static class HudContent
 {
-    public static string Title = "BestDeal";
-    public static readonly List<string> Lines = new();
-    public static void Set(string title, IEnumerable<string> lines)
+    internal static readonly List<string> Preparation = new();
+    internal static readonly List<string> QuoteSummary = new();
+    internal static readonly List<string> QuoteItems = new();
+
+    internal static void ClearQuote()
     {
-        Title = title;
-        Lines.Clear();
-        Lines.AddRange(lines);
+        QuoteSummary.Clear();
+        QuoteItems.Clear();
+    }
+
+    internal static void Clear()
+    {
+        Preparation.Clear();
+        ClearQuote();
     }
 }
-

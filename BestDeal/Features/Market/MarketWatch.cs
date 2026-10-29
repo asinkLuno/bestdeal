@@ -49,7 +49,8 @@ public static class MarketWatch
     {
         if (Time.unscaledTime < _nextCheck) return;
         _nextCheck = Time.unscaledTime + RefreshInterval;
-        HudContent.Set(L10n.Text("MarketTitle"), BuildLines());
+        HudContent.Preparation.Clear();
+        HudContent.Preparation.AddRange(BuildLines());
     }
 
     static List<string> BuildLines()
